@@ -14,7 +14,7 @@ COPY . .
 RUN pnpm install --frozen-lockfile=false \
  && pnpm --filter @k8s-sentinel/relay-protocol build \
  && pnpm --filter @k8s-sentinel/relay build \
- && pnpm --filter @k8s-sentinel/relay deploy --prod /app
+ && pnpm --filter @k8s-sentinel/relay deploy --prod --legacy /app
 
 FROM node:22-alpine AS run
 WORKDIR /app
