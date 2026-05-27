@@ -21,6 +21,19 @@ pnpm --filter @k8s-sentinel/api phase0
 Copy `.env.example` → `.env` and set `ANTHROPIC_API_KEY` to use the real Claude
 Agent SDK engine. Leave it unset to run fully offline against fixtures.
 
+### Air-gap (sovereign) mode
+
+For disconnected / classified networks, point at a local open-weight model and
+make **zero external calls** — same product, same agents, swapped engine:
+
+```bash
+SENTINEL_ENGINE=hermes HERMES_BASE_URL=http://localhost:8080/v1 \
+  pnpm --filter @k8s-sentinel/api sentinel scan
+```
+
+In-cluster, `helm install … --set engine.kind=hermes` is enough — the chart
+drops all public egress automatically.
+
 ## Architecture
 
 Three specialized agents behind a thin orchestrator, over a swappable engine:
@@ -45,9 +58,9 @@ interface in `@k8s-sentinel/core` — never on a concrete engine.
 | `packages/agent-collector` | recon + scan → `Finding[]` | Phase 1 |
 | `packages/agent-analyst` | correlation + ranking + NL query | Phase 2 |
 | `packages/agent-author` | reports + remediation + audit | Phase 3 |
-| `packages/engine-hermes` | air-gapped local-model adapter | Phase 4 |
+| `packages/engine-hermes` | air-gapped local-model adapter | ✅ Phase 4 |
 | `apps/api` | Fastify + tRPC orchestrator (SSE) | Phase 0→3 |
 | `apps/dashboard` | Apple-like Next.js UI (6 screens) | Phase 3 |
-| `deploy/helm` | read-only RBAC, sandbox, egress allow-list | ✅ Phase 0 |
+| `deploy/helm` | read-only RBAC, sandbox, egress allow-list | ✅ Phase 0→4 |
 
 See [`docs/PROGRESS.md`](docs/PROGRESS.md) for phase-by-phase status.

@@ -44,6 +44,9 @@ importers:
       '@k8s-sentinel/engine-claude':
         specifier: workspace:*
         version: link:../../packages/engine-claude
+      '@k8s-sentinel/engine-hermes':
+        specifier: workspace:*
+        version: link:../../packages/engine-hermes
       '@k8s-sentinel/tools-mcp':
         specifier: workspace:*
         version: link:../../packages/tools-mcp
@@ -174,6 +177,19 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.152
         version: 0.3.152(@anthropic-ai/sdk@0.98.0(zod@3.25.76))(@modelcontextprotocol/sdk@1.29.0(zod@3.25.76))(zod@3.25.76)
+      '@k8s-sentinel/core':
+        specifier: workspace:*
+        version: link:../core
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.8
+        version: 2.1.9(@types/node@24.12.4)
+
+  packages/engine-hermes:
+    dependencies:
       '@k8s-sentinel/core':
         specifier: workspace:*
         version: link:../core

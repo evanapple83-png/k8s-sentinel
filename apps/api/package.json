@@ -24,6 +24,7 @@
     "@k8s-sentinel/agent-collector": "workspace:*",
     "@k8s-sentinel/core": "workspace:*",
     "@k8s-sentinel/engine-claude": "workspace:*",
+    "@k8s-sentinel/engine-hermes": "workspace:*",
     "@k8s-sentinel/tools-mcp": "workspace:*",
     "dotenv": "^16.4.7"
   },

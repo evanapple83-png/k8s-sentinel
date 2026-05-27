@@ -1,13 +1,21 @@
 {{- if .Values.egress.enabled }}
+{{- $airgap := eq .Values.engine.kind "hermes" }}
 # Default-deny egress with an explicit allow-list (BUILD.md §10).
-# In Hermes / air-gap mode, set egress.allow to [] for ZERO external calls —
-# DNS + in-cluster API are the only permitted destinations.
+#
+# - Always: DNS, plus in-cluster / private-CIDR traffic on 443 (kube-apiserver,
+#   read-only scanning) and the local model port (an in-cluster Hermes).
+# - CLAUDE mode: additionally permits 443 to the wider network so the managed
+#   model API is reachable. Tighten `egress.privateCidrs` to your egress proxy.
+# - HERMES (air-gap) mode: NO public egress is rendered at all — the model runs
+#   in-cluster, so only DNS + private CIDRs are allowed. ZERO external calls.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "k8s-sentinel.fullname" . }}-egress
   labels:
     {{- include "k8s-sentinel.labels" . | nindent 4 }}
+  annotations:
+    k8s-sentinel.io/mode: {{ ternary "air-gap" "connected" $airgap | quote }}
 spec:
   podSelector:
     matchLabels:
@@ -22,11 +30,24 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # Allow the in-cluster API server (read-only scanning).
+    # In-cluster / private destinations: kube-apiserver (RO scan) + local model.
+    - to:
+        {{- range .Values.egress.privateCidrs }}
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: {{ .Values.egress.localModelPort }}
+  {{- if not $airgap }}
+    # CLAUDE mode only: reach the managed model API over 443.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
       ports:
         - protocol: TCP
           port: 443
+  {{- end }}
 {{- end }}

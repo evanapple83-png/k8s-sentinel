@@ -94,7 +94,34 @@ Tracks the phased plan in `BUILD.md §11`. Each phase ships and has a DoD.
 
 > **Phase 3 complete — all of Features 1–6 present (Claude default / offline fixtures).**
 
-## Phase 4 — Hardening + Hermes
+## ✅ Phase 4 — Hardening + Sovereignty (Features 7, 8) + Hermes
 
-Not started. Prompt-injection hardening on scan input, sandbox separation, egress
-allow-list, Helm one-command install, and the `engine-hermes` air-gap adapter.
+- [x] **`packages/engine-hermes`: `HermesEngine implements AgentEngine`** — the
+      air-gap brain. Dependency-free OpenAI-compatible Chat Completions client
+      (works with vLLM/llama.cpp/Ollama/TGI), bounded tool-call turn-loop,
+      structured-JSON extraction, full `AgentEvent` streaming. Injectable `fetch`
+      so it's fully testable offline. Talks to exactly ONE endpoint (the local
+      `baseUrl`); `assertLocalUrl` refuses any public host by default.
+- [x] **Injection hardening enforced at the scan-input chokepoint** —
+      `hardenFindings` (core) defangs the NORMALIZED `title`/`description`/
+      `resource.*` fields (not just `raw`), applied in `BaseScanner` so every
+      path that yields findings (live CLI *or* fixture) is sanitized once. Stable
+      `id`/`ruleId`/severity/scores preserved.
+- [x] **Engine selectable by config** — `createEngine` returns the working
+      Hermes engine on `SENTINEL_ENGINE=hermes`; agents/IP unchanged (the engine
+      boundary held). Air-gap endpoint validated; public endpoints rejected.
+- [x] **Helm one-command install + air-gap polish** — `engine.kind=hermes` alone
+      drops ALL public egress (NetworkPolicy renders DNS + private CIDRs only,
+      zero `0.0.0.0/0`), wires `HERMES_*` env, omits the Anthropic secret, and
+      annotates `mode: air-gap`. Added `Service` + post-install `NOTES.txt`.
+      Claude mode keeps 443 egress for the managed API. `helm lint` clean; both
+      modes `helm template` render valid manifests.
+- [x] **DoD:** the identical product runs in **two modes selectable by config** —
+      `sentinel scan` produces the same 14 findings + 2 ranked attack paths under
+      the default engine and under `SENTINEL_ENGINE=hermes`; the run is recorded
+      `engine=hermes` in the immutable audit log with **zero external calls**, no
+      change to any agent/IP code. 76 tests green (engine-hermes 10, core +6
+      hardening, tools-mcp +1 chokepoint, api air-gap selection).
+
+> **MVP complete — all eight features present. Claude (default) and Hermes
+> (air-gapped) are drop-in interchangeable behind the engine boundary.**

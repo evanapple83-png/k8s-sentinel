@@ -23,7 +23,22 @@ describe('createEngine', () => {
     expect(engine.id).toBe('claude');
   });
 
-  it('throws a clear error when hermes is selected before Phase 4', async () => {
-    await expect(createEngine({ ...base, engine: 'hermes' })).rejects.toThrow(/Hermes/);
+  it('returns the hermes (air-gap) engine when configured', async () => {
+    const engine = await createEngine({
+      ...base,
+      engine: 'hermes',
+      hermes: { baseUrl: 'http://localhost:8080/v1', model: 'NousResearch/Hermes-4-70B' },
+    });
+    expect(engine.id).toBe('hermes');
+  });
+
+  it('refuses a public hermes endpoint (air-gap promise)', async () => {
+    await expect(
+      createEngine({
+        ...base,
+        engine: 'hermes',
+        hermes: { baseUrl: 'https://api.openai.com/v1', model: 'm' },
+      }),
+    ).rejects.toThrow(/air-gap|not local/);
   });
 });

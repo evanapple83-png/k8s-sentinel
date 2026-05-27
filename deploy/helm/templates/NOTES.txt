@@ -1,0 +1,32 @@
+K8s Sentinel is installed — release {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Engine: {{ .Values.engine.kind }}{{ if eq .Values.engine.kind "hermes" }}  (AIR-GAP: zero external egress){{ end }}
+Posture: read-only RBAC · default-deny egress{{ if .Values.sandbox.enabled }} · sandbox RuntimeClass {{ .Values.sandbox.runtimeClassName }}{{ end }}
+
+1. Reach the API / dashboard backend:
+
+     kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "k8s-sentinel.fullname" . }} {{ .Values.service.port }}:{{ .Values.service.port }}
+
+   then open http://localhost:{{ .Values.service.port }}/health
+
+{{- if eq .Values.engine.kind "hermes" }}
+
+2. AIR-GAP mode is active. The control plane will ONLY reach:
+     • DNS
+     • in-cluster / private CIDRs ({{ join ", " .Values.egress.privateCidrs }}) on 443 + {{ .Values.egress.localModelPort }}
+   Point it at your in-cluster model server:
+     engine.hermes.baseUrl = {{ .Values.engine.hermes.baseUrl }}
+     engine.hermes.model   = {{ .Values.engine.hermes.model }}
+   No ANTHROPIC_API_KEY is needed or used.
+{{- else }}
+
+2. CLAUDE mode is active. Provide credentials via a secret:
+     kubectl -n {{ .Release.Namespace }} create secret generic sentinel-anthropic \
+       --from-literal=ANTHROPIC_API_KEY=sk-...
+     helm upgrade {{ .Release.Name }} <chart> --set engine.apiKeySecret=sentinel-anthropic
+
+   To go fully offline, re-install with: --set engine.kind=hermes
+{{- end }}
+
+The agent is read-only and proposes fixes as reviewable PRs — it never applies
+changes in-cluster. Every decision is written to the immutable audit log.

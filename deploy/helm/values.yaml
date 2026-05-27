@@ -10,7 +10,8 @@ image:
 
 # --- Engine ----------------------------------------------------------------
 engine:
-  # "claude" (default) or "hermes" (air-gapped, Phase 4).
+  # "claude" (default) or "hermes" (air-gapped, Phase 4). Selecting "hermes"
+  # automatically tightens egress to in-cluster only (see networkpolicy.yaml).
   kind: claude
   # Reference an existing secret holding ANTHROPIC_API_KEY (claude mode).
   # Leave empty in air-gap / Hermes mode.
@@ -19,6 +20,11 @@ engine:
     collector: claude-haiku-4-5
     analyst: claude-opus-4-7
     author: claude-sonnet-4-6
+  # Hermes (air-gap) settings — point at a local, in-cluster OpenAI-compatible
+  # model server. The short service name resolves within the release namespace.
+  hermes:
+    baseUrl: http://hermes:8080/v1
+    model: NousResearch/Hermes-4-70B
 
 # --- Security model (BUILD.md §10) -----------------------------------------
 rbac:
@@ -32,12 +38,28 @@ sandbox:
   runtimeClassName: "" # e.g. "gvisor" or "kata"
   enabled: false
 
-# Outbound egress allow-list. In Hermes (air-gap) mode this should be empty.
+# Outbound egress allow-list (BUILD.md §10). Default-deny with explicit allows.
+# When engine.kind=hermes the chart drops ALL public egress automatically:
+# only DNS + in-cluster (private CIDR) traffic is permitted — true air-gap.
 egress:
   enabled: true
-  # Hosts the control plane may reach (e.g. the model provider API).
+  # Hosts the control plane may reach in CLAUDE mode (documentation/UX only;
+  # NetworkPolicy can't match hostnames — tighten with your egress proxy CIDR).
   allow:
     - api.anthropic.com
+  # CIDRs treated as "in-cluster / private" and always reachable on 443 + the
+  # local model port (covers the kube-apiserver and an in-cluster Hermes).
+  privateCidrs:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  # Port the in-cluster Hermes model server listens on (air-gap mode).
+  localModelPort: 8080
+
+# API service so the dashboard (and `kubectl port-forward`) can reach the API.
+service:
+  type: ClusterIP
+  port: 8787
 
 controlPlane:
   replicas: 1

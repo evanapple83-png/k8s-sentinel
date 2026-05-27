@@ -12,4 +12,5 @@ export * from './attack-path.js';
 export * from './audit.js';
 export * from './audit-sink.js';
 export * from './sanitize.js';
+export * from './harden.js';
 export * from './mock-engine.js';

@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import type { Finding, ScannerSource } from '@k8s-sentinel/core';
+import { hardenFindings, type Finding, type ScannerSource } from '@k8s-sentinel/core';
 import { isOnPath, run } from './exec.js';
 import type { Scanner, ScanResult, ScanTarget } from './types.js';
 
@@ -35,7 +35,7 @@ export abstract class BaseScanner implements Scanner {
         const raw = this.parseOutput(stdout);
         return {
           source: this.source,
-          findings: this.normalize(raw),
+          findings: this.normalizeHardened(raw),
           usedFixture: false,
           durationMs: Date.now() - start,
           ...(stderr.trim() ? { warning: truncate(stderr) } : {}),
@@ -59,10 +59,19 @@ export abstract class BaseScanner implements Scanner {
     return JSON.parse(readFileSync(url, 'utf8'));
   }
 
+  /**
+   * Single enforced chokepoint (BUILD.md §10): every path that produces
+   * findings — live CLI or bundled fixture — goes through here, so the
+   * normalized display fields are always defanged before leaving the scanner.
+   */
+  private normalizeHardened(raw: unknown): Finding[] {
+    return hardenFindings(this.normalize(raw));
+  }
+
   private fixtureResult(start: number): ScanResult {
     return {
       source: this.source,
-      findings: this.normalize(this.loadFixture()),
+      findings: this.normalizeHardened(this.loadFixture()),
       usedFixture: true,
       durationMs: Date.now() - start,
     };
