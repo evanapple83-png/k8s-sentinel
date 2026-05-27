@@ -225,6 +225,112 @@ export async function recordAudit(input: {
   if (error) throw error;
 }
 
+// --- Auth provisioning + context (used by NextAuth callbacks) ---------------
+
+export interface AuthContext {
+  userId: string;
+  maxRole: Role;
+  mfaRequired: boolean;
+  mfaEnrolled: boolean;
+  activeAccountId: string | null;
+  activeRole: Role | null;
+}
+
+/**
+ * Ensure the signed-in user exists and belongs to at least one account. A brand
+ * new user is bootstrapped into a personal workspace as admin so they land
+ * somewhere; real org onboarding/invites come in 1E.
+ */
+export async function provisionUser(input: {
+  email: string;
+  name?: string | null;
+  image?: string | null;
+}): Promise<string> {
+  const userId = await ensureUser(input);
+  const accounts = await listAccountsForUser(userId);
+  if (accounts.length === 0) {
+    const db = supabaseAdmin();
+    const name = input.name ? `${input.name}'s workspace` : `${input.email.split('@')[0]}'s workspace`;
+    const slug = `ws-${userId.slice(0, 8)}`;
+    const { data: acc, error } = await db
+      .from('account')
+      .insert({ name, slug })
+      .select('id')
+      .single();
+    if (error) throw error;
+    const { error: mErr } = await db
+      .from('membership')
+      .insert({ account_id: acc.id, user_id: userId, role: 'admin' });
+    if (mErr) throw mErr;
+    await recordAudit({
+      accountId: acc.id,
+      actor: input.email,
+      action: 'account.bootstrapped',
+      detail: { role: 'admin' },
+    });
+  }
+  return userId;
+}
+
+/** Resolve role + MFA status for the JWT/session (no account scoping needed). */
+export async function getAuthContext(userId: string): Promise<AuthContext> {
+  const accounts = await listAccountsForUser(userId);
+  const maxRole = accounts.reduce<Role>(
+    (m, a) => (ROLE_RANK[a.role] > ROLE_RANK[m] ? a.role : m),
+    'viewer',
+  );
+  const active = accounts[0] ?? null;
+  const db = supabaseAdmin();
+  const { data: u } = await db
+    .from('app_user')
+    .select('mfa_enrolled')
+    .eq('id', userId)
+    .maybeSingle();
+  return {
+    userId,
+    maxRole,
+    mfaRequired: ROLE_RANK[maxRole] >= ROLE_RANK.approver,
+    mfaEnrolled: Boolean(u?.mfa_enrolled),
+    activeAccountId: active?.account.id ?? null,
+    activeRole: active?.role ?? null,
+  };
+}
+
+export async function getMfaState(userId: string): Promise<{ secret: string | null; enrolled: boolean }> {
+  const db = supabaseAdmin();
+  const { data, error } = await db
+    .from('app_user')
+    .select('mfa_secret, mfa_enrolled')
+    .eq('id', userId)
+    .maybeSingle();
+  if (error) throw error;
+  return { secret: data?.mfa_secret ?? null, enrolled: Boolean(data?.mfa_enrolled) };
+}
+
+/** Store a freshly generated secret (not yet enrolled until first verify). */
+export async function setMfaSecret(userId: string, secret: string): Promise<void> {
+  const db = supabaseAdmin();
+  const { error } = await db
+    .from('app_user')
+    .update({ mfa_secret: secret, mfa_enrolled: false })
+    .eq('id', userId);
+  if (error) throw error;
+}
+
+export async function markMfaEnrolled(userId: string, actorEmail: string): Promise<void> {
+  const db = supabaseAdmin();
+  const { error } = await db.from('app_user').update({ mfa_enrolled: true }).eq('id', userId);
+  if (error) throw error;
+  const accounts = await listAccountsForUser(userId);
+  if (accounts[0]) {
+    await recordAudit({
+      accountId: accounts[0].account.id,
+      actor: actorEmail,
+      action: 'mfa.enrolled',
+    });
+  }
+}
+
 // --- Row mappers (snake_case DB → camelCase domain) -------------------------
 
 function mapCluster(r: Record<string, unknown>): Cluster {

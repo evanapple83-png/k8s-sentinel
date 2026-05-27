@@ -13,8 +13,12 @@ import {
   ShieldCheck,
   PlugZap,
 } from 'lucide-react';
+import { LogOut } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ThemeToggle } from '@/components/theme-toggle';
+import { doSignOut } from '@/app/actions';
+
+export type ShellUser = { name: string; email: string; role: string } | null;
 
 const NAV = [
   { href: '/', label: 'Overview', icon: Activity },
@@ -75,8 +79,13 @@ function Picker({ label, children }: { label: string; children: ReactNode }) {
 const selectCls =
   'w-full rounded-md border bg-background px-2.5 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-export function AppShell({ children }: { children: ReactNode }) {
+export function AppShell({ children, user }: { children: ReactNode; user?: ShellUser }) {
   const pathname = usePathname();
+
+  // Auth screens render without the app chrome.
+  if (pathname.startsWith('/login') || pathname.startsWith('/mfa')) {
+    return <>{children}</>;
+  }
 
   return (
     <div className="grid min-h-dvh grid-cols-[260px_1fr]">
@@ -129,6 +138,29 @@ export function AppShell({ children }: { children: ReactNode }) {
             <NavLink key={n.href} {...n} pathname={pathname} />
           ))}
         </div>
+
+        {user ? (
+          <div className="flex items-center gap-2 border-t pt-3">
+            <div className="grid size-8 shrink-0 place-items-center rounded-full bg-secondary text-xs font-semibold uppercase text-secondary-foreground">
+              {user.name.slice(0, 2)}
+            </div>
+            <div className="min-w-0 flex-1 leading-tight">
+              <div className="truncate text-xs font-medium">{user.name}</div>
+              <div className="truncate text-[11px] capitalize text-muted-foreground">
+                {user.role}
+              </div>
+            </div>
+            <form action={doSignOut}>
+              <button
+                type="submit"
+                aria-label="Sign out"
+                className="flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+              >
+                <LogOut className="size-4" />
+              </button>
+            </form>
+          </div>
+        ) : null}
       </aside>
 
       <main className="min-w-0 px-8 py-7">{children}</main>
