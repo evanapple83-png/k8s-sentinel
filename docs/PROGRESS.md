@@ -48,7 +48,7 @@ Tracks the phased plan in `BUILD.md §11`. Each phase ships and has a DoD.
       internet-exposed running as root" returns exactly the reachable, root,
       internet-exposed `payment-api` (frontend excluded). 14 analyst tests.
 
-## 🟡 Phase 3 — Author + UI (Features 3, 5, 6)
+## ✅ Phase 3 — Author + UI (Features 3, 5, 6)
 
 **Phase 3a — Author agent + API (backend) ✅**
 
@@ -74,8 +74,25 @@ Tracks the phased plan in `BUILD.md §11`. Each phase ships and has a DoD.
       `author:fixes.proposed` + `user:fix.approved`). Verified over the CLI **and**
       the HTTP/SSE server. 63 tests green.
 
-**Phase 3b — Apple-like dashboard (the 6 screens over SSE) — next.**
-Backend contract is in place (`apps/api/src/server.ts`); `apps/dashboard` still empty.
+**Phase 3b — Apple-like dashboard (the 6 screens over SSE) ✅**
+
+- [x] `apps/dashboard`: Next 16 (App Router, React 19), standalone browser app —
+      talks to the orchestrator API over HTTP/SSE, imports no Node-only backend code
+- [x] design system (`globals.css`) from BUILD.md §8 tokens; light/dark; sidebar
+      shell + run picker + live `RunProvider` context (`lib/run-context.tsx`)
+- [x] the 6 screens:
+  - **Overview** — risk ring, posture summary, severity/scanner breakdown,
+    "since last scan" delta, **live scan over EventSource** (`scan-button.tsx`)
+  - **Findings** — exploitability-ranked list, severity/source/reachable/search filters
+  - **Attack Paths** — correlated chain rendered as an entry→step node graph
+  - **Ask** — Spotlight-style NL query bar (POST /api/ask)
+  - **Report** — inline HTML report + one-click PDF/MD/JSON export
+  - **Fixes** — remediation cards with colorized diff/steps; **Approve → PR** (POST approve)
+- [x] **DoD (full):** `next build` green (7 static routes); served dashboard +
+      `sentinel serve` API verified together — Overview→Findings→Paths→Ask→Report→Fixes
+      drive the same scan/correlate/report/approve flow end-to-end in the browser UI.
+
+> **Phase 3 complete — all of Features 1–6 present (Claude default / offline fixtures).**
 
 ## Phase 4 — Hardening + Hermes
 
