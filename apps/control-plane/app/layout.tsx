@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import './globals.css';
 import { AppShell } from '@/components/app-shell';
+import { themeInitScript } from '@/components/theme-toggle';
 
 export const metadata: Metadata = {
   title: 'K8s Sentinel — Control Plane',
@@ -11,7 +12,10 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
       <body>
         <AppShell>{children}</AppShell>
       </body>

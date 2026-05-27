@@ -14,6 +14,7 @@ import {
   PlugZap,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ThemeToggle } from '@/components/theme-toggle';
 
 const NAV = [
   { href: '/', label: 'Overview', icon: Activity },
@@ -80,17 +81,21 @@ export function AppShell({ children }: { children: ReactNode }) {
   return (
     <div className="grid min-h-dvh grid-cols-[260px_1fr]">
       <aside className="flex flex-col gap-4 border-r bg-card/40 p-4">
-        <div className="flex items-center gap-2.5 px-2 py-1">
-          <span className="grid size-8 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">
-            K
-          </span>
-          <div className="leading-tight">
-            <div className="text-sm font-semibold">K8s Sentinel</div>
-            <div className="text-[11px] text-muted-foreground">Hosted control plane</div>
+        <div className="flex items-center justify-between px-2 py-1">
+          <div className="flex items-center gap-2.5">
+            <span className="grid size-8 place-items-center rounded-lg bg-primary font-bold text-primary-foreground">
+              K
+            </span>
+            <div className="leading-tight">
+              <div className="text-sm font-semibold">K8s Sentinel</div>
+              <div className="text-[11px] text-muted-foreground">Hosted control plane</div>
+            </div>
           </div>
+          <ThemeToggle />
         </div>
 
-        {/* Account / cluster / run selection — wired to Supabase in 1B/1D. */}
+        {/* Account / cluster / run selection — wired to Supabase in 1D.
+            Showing demo data so every screen previews the real product. */}
         <div className="space-y-2.5">
           <Picker label="Account">
             <select className={selectCls} disabled>
@@ -99,14 +104,18 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Picker>
           <Picker label="Cluster">
             <select className={selectCls} disabled>
-              <option>prod-eu-1</option>
+              <option>prod-eu-1 · connected</option>
             </select>
           </Picker>
           <Picker label="Active run">
             <select className={selectCls} disabled>
-              <option>no runs yet</option>
+              <option>27 May 09:14 · risk 100</option>
             </select>
           </Picker>
+          <div className="rounded-md border border-dashed px-2.5 py-1.5 text-[11px] text-muted-foreground">
+            Showing <span className="font-medium text-foreground">demo data</span> — connect a
+            cluster for live results.
+          </div>
         </div>
 
         <nav className="space-y-1">
