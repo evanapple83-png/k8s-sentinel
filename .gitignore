@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+.next/
+out/
+*.tsbuildinfo
+
+# Turbo
+.turbo/
+
+# Test / coverage
+coverage/
+
+# Env & secrets — never commit
+.env
+.env.*
+!.env.example
+*.kubeconfig
+kubeconfig
+
+# Runtime data (SQLite, audit logs, generated reports)
+*.sqlite
+*.sqlite-journal
+*.db
+data/
+reports/out/
+
+# OS / editor
+.DS_Store
+*.log
+.vscode/
+.idea/

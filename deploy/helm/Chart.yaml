@@ -1,0 +1,14 @@
+apiVersion: v2
+name: k8s-sentinel
+description: Autonomous, self-hosted AI security agent for Kubernetes (read-only by default).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - security
+  - kubernetes
+  - posture
+  - ai-agent
+home: https://github.com/your-org/k8s-sentinel
+sources:
+  - https://github.com/your-org/k8s-sentinel

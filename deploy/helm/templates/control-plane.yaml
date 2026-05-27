@@ -1,0 +1,64 @@
+# Control plane (hardened pod). Holds NO standing write credentials and mounts
+# only the read-only service account token. Scanner execution (execution plane)
+# is isolated under the sandbox RuntimeClass when enabled (BUILD.md §4).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "k8s-sentinel.fullname" . }}-control-plane
+  labels:
+    {{- include "k8s-sentinel.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.controlPlane.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "k8s-sentinel.name" . }}
+      app.kubernetes.io/component: control-plane
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "k8s-sentinel.name" . }}
+        app.kubernetes.io/component: control-plane
+    spec:
+      serviceAccountName: {{ include "k8s-sentinel.serviceAccountName" . }}
+      {{- if .Values.sandbox.enabled }}
+      runtimeClassName: {{ .Values.sandbox.runtimeClassName | quote }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: control-plane
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.containerSecurityContext | nindent 12 }}
+          env:
+            - name: SENTINEL_ENGINE
+              value: {{ .Values.engine.kind | quote }}
+            - name: SENTINEL_MODEL_COLLECTOR
+              value: {{ .Values.engine.models.collector | quote }}
+            - name: SENTINEL_MODEL_ANALYST
+              value: {{ .Values.engine.models.analyst | quote }}
+            - name: SENTINEL_MODEL_AUTHOR
+              value: {{ .Values.engine.models.author | quote }}
+            {{- if .Values.engine.apiKeySecret }}
+            - name: ANTHROPIC_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.engine.apiKeySecret }}
+                  key: ANTHROPIC_API_KEY
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8787
+          resources:
+            {{- toYaml .Values.controlPlane.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        - name: data
+          emptyDir: {}

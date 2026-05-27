@@ -1,0 +1,54 @@
+{
+  "Controls": [
+    {
+      "id": "1",
+      "version": "1.8",
+      "text": "Control Plane Security Configuration",
+      "node_type": "master",
+      "tests": [
+        {
+          "section": "1.2",
+          "desc": "API Server",
+          "results": [
+            {
+              "test_number": "1.2.1",
+              "test_desc": "Ensure that the --anonymous-auth argument is set to false",
+              "status": "FAIL",
+              "scored": true,
+              "remediation": "Edit the API server pod specification file and set --anonymous-auth=false."
+            },
+            {
+              "test_number": "1.2.6",
+              "test_desc": "Ensure that the --kubelet-certificate-authority argument is set as appropriate",
+              "status": "WARN",
+              "scored": false,
+              "remediation": "Follow the Kubernetes documentation and setup the TLS connection between the apiserver and kubelets."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "4",
+      "version": "1.8",
+      "text": "Worker Node Security Configuration",
+      "node_type": "node",
+      "tests": [
+        {
+          "section": "4.2",
+          "desc": "Kubelet",
+          "results": [
+            {
+              "test_number": "4.2.1",
+              "test_desc": "Ensure that the --anonymous-auth argument is set to false",
+              "status": "FAIL",
+              "scored": true,
+              "remediation": "If using a Kubelet config file, edit it to set authentication.anonymous.enabled to false."
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "Totals": { "total_pass": 52, "total_fail": 2, "total_warn": 1, "total_info": 0 }
+}

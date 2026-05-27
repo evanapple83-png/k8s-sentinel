@@ -1,0 +1,72 @@
+{
+  "resources": [
+    {
+      "resourceID": "apps/v1/Deployment/prod/payment-api",
+      "object": {
+        "kind": "Deployment",
+        "metadata": { "name": "payment-api", "namespace": "prod" }
+      }
+    },
+    {
+      "resourceID": "v1/Service/prod/payment-api-svc",
+      "object": {
+        "kind": "Service",
+        "metadata": { "name": "payment-api-svc", "namespace": "prod" }
+      }
+    },
+    {
+      "resourceID": "apps/v1/Deployment/prod/frontend",
+      "object": {
+        "kind": "Deployment",
+        "metadata": { "name": "frontend", "namespace": "prod" }
+      }
+    }
+  ],
+  "results": [
+    {
+      "resourceID": "apps/v1/Deployment/prod/payment-api",
+      "controls": [
+        {
+          "controlID": "C-0057",
+          "name": "Privileged container",
+          "scoreFactor": 8,
+          "status": { "status": "failed" }
+        },
+        {
+          "controlID": "C-0017",
+          "name": "Immutable container filesystem",
+          "scoreFactor": 3,
+          "status": { "status": "failed" }
+        },
+        {
+          "controlID": "C-0186",
+          "name": "Workloads with cluster-takeover roles",
+          "scoreFactor": 9,
+          "status": { "status": "failed" }
+        }
+      ]
+    },
+    {
+      "resourceID": "v1/Service/prod/payment-api-svc",
+      "controls": [
+        {
+          "controlID": "C-0256",
+          "name": "Exposure to internet",
+          "scoreFactor": 7,
+          "status": { "status": "failed" }
+        }
+      ]
+    },
+    {
+      "resourceID": "apps/v1/Deployment/prod/frontend",
+      "controls": [
+        {
+          "controlID": "C-0260",
+          "name": "Missing network policy",
+          "scoreFactor": 4,
+          "status": { "status": "failed" }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,59 @@
+# K8s Sentinel — default values. Secure-by-default; widen only deliberately.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/your-org/k8s-sentinel
+  tag: "0.1.0"
+  pullPolicy: IfNotPresent
+
+# --- Engine ----------------------------------------------------------------
+engine:
+  # "claude" (default) or "hermes" (air-gapped, Phase 4).
+  kind: claude
+  # Reference an existing secret holding ANTHROPIC_API_KEY (claude mode).
+  # Leave empty in air-gap / Hermes mode.
+  apiKeySecret: ""
+  models:
+    collector: claude-haiku-4-5
+    analyst: claude-opus-4-7
+    author: claude-sonnet-4-6
+
+# --- Security model (BUILD.md §10) -----------------------------------------
+rbac:
+  # Read-only by default. Setting this true is intentionally NOT supported by
+  # the chart — writes only ever happen as human-approved PRs, never in-cluster.
+  create: true
+
+# Sandbox / execution-plane isolation (gVisor or Kata). When set, scanner pods
+# run under this RuntimeClass; the control plane holds no write creds.
+sandbox:
+  runtimeClassName: "" # e.g. "gvisor" or "kata"
+  enabled: false
+
+# Outbound egress allow-list. In Hermes (air-gap) mode this should be empty.
+egress:
+  enabled: true
+  # Hosts the control plane may reach (e.g. the model provider API).
+  allow:
+    - api.anthropic.com
+
+controlPlane:
+  replicas: 1
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+# Hardened pod defaults applied to every workload.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

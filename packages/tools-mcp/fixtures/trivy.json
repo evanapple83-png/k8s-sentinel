@@ -1,0 +1,49 @@
+{
+  "SchemaVersion": 2,
+  "ArtifactName": "cluster",
+  "Results": [
+    {
+      "Target": "payment-api:1.2.0 (debian 12.1)",
+      "Class": "os-pkgs",
+      "Type": "debian",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2023-0286",
+          "PkgName": "openssl",
+          "InstalledVersion": "3.0.9",
+          "FixedVersion": "3.0.10",
+          "Severity": "CRITICAL",
+          "Title": "X.400 address type confusion in X.509 GeneralName",
+          "Description": "There is a type confusion vulnerability relating to X.400 address processing inside an X.509 GeneralName, allowing remote attackers to crash the service or potentially read memory contents.",
+          "CVSS": { "nvd": { "V3Score": 7.4 }, "redhat": { "V3Score": 7.4 } }
+        },
+        {
+          "VulnerabilityID": "CVE-2022-37434",
+          "PkgName": "zlib",
+          "InstalledVersion": "1.2.11",
+          "FixedVersion": "1.2.12",
+          "Severity": "HIGH",
+          "Title": "zlib: heap-based buffer over-read in inflate via large gzip header",
+          "Description": "zlib through 1.2.12 has a heap-based buffer over-read in inflate in inflate.c via a large gzip header extra field.",
+          "CVSS": { "nvd": { "V3Score": 9.8 } }
+        }
+      ]
+    },
+    {
+      "Target": "frontend:2.0.0 (alpine 3.18.2)",
+      "Class": "os-pkgs",
+      "Type": "alpine",
+      "Vulnerabilities": [
+        {
+          "VulnerabilityID": "CVE-2023-5678",
+          "PkgName": "libcrypto3",
+          "InstalledVersion": "3.1.1-r1",
+          "Severity": "MEDIUM",
+          "Title": "openssl: Excessive time spent in DH key/parameter generation",
+          "Description": "Generating excessively long X9.42 DH keys may be very slow.",
+          "CVSS": { "nvd": { "V3Score": 5.3 } }
+        }
+      ]
+    }
+  ]
+}
