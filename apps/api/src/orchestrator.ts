@@ -1,6 +1,7 @@
 import { FileAuditSink, type AttackPath, type AuditSink, type Finding } from '@k8s-sentinel/core';
 import { runCollector } from '@k8s-sentinel/agent-collector';
 import { runAnalyst } from '@k8s-sentinel/agent-analyst';
+import { proposeRemediations, type RemediationProposal } from '@k8s-sentinel/agent-author';
 import type { ScanTarget } from '@k8s-sentinel/tools-mcp';
 import { loadConfig, type SentinelConfig } from './config.js';
 import { createEngine } from './engine.js';
@@ -18,14 +19,16 @@ export interface ScanResultSummary {
   run: RunRecord;
   findings: Finding[];
   paths: AttackPath[];
+  proposals: RemediationProposal[];
 }
 
 /**
  * Orchestrates a full scan run: Collector (Phase 1) gathers + normalizes
- * findings, then the Analyst (Phase 2) enriches them with reachability,
- * correlates ranked attack paths, and maps compliance controls. Persists
- * findings + inventory + paths and writes the immutable audit trail. Holds no
- * cluster write creds (BUILD.md §4).
+ * findings, the Analyst (Phase 2) enriches them with reachability, correlates
+ * ranked attack paths, and maps compliance controls, then the Author (Phase 3)
+ * proposes reviewable remediations. Persists findings + inventory + paths and
+ * writes the immutable audit trail. Holds no cluster write creds (BUILD.md §4);
+ * remediations are proposals only — nothing is applied here.
  */
 export async function runScan(opts: ScanOptions = {}): Promise<ScanResultSummary> {
   const config = opts.config ?? loadConfig();
@@ -82,6 +85,22 @@ export async function runScan(opts: ScanOptions = {}): Promise<ScanResultSummary
       },
     });
 
+    // Phase 3 — Author: propose reviewable remediations (propose, don't apply).
+    opts.onProgress?.('Proposing remediations (reviewable diffs / PRs)…');
+    const proposals = proposeRemediations(analyst.findings, analyst.paths);
+
+    await audit.append({
+      actor: 'agent',
+      agent: 'author',
+      action: 'fixes.proposed',
+      runId,
+      output: {
+        count: proposals.length,
+        byPlaybook: tallyBy(proposals, (p) => p.playbookId),
+        proposals: proposals.map(toFixAudit),
+      },
+    });
+
     store.finishRun(runId, {
       status: 'complete',
       usedFixtures: collector.stats.usedFixtures,
@@ -93,7 +112,7 @@ export async function runScan(opts: ScanOptions = {}): Promise<ScanResultSummary
 
     await audit.append({ actor: 'orchestrator', action: 'scan.complete', runId });
 
-    return { run: store.getRun(runId)!, findings: analyst.findings, paths: analyst.paths };
+    return { run: store.getRun(runId)!, findings: analyst.findings, paths: analyst.paths, proposals };
   } catch (err) {
     store.finishRun(runId, { status: 'failed' });
     await audit.append({
@@ -112,4 +131,25 @@ function toScanAudit(r: { source: string; usedFixture: boolean; durationMs: numb
 
 function toPathAudit(p: AttackPath) {
   return { id: p.id, score: p.score, entryPoint: p.entryPoint, findingIds: p.findingIds };
+}
+
+function toFixAudit(p: RemediationProposal) {
+  return {
+    id: p.id,
+    playbookId: p.playbookId,
+    severity: p.severity,
+    kind: p.kind,
+    path: p.path,
+    status: p.status,
+    findingIds: p.findingIds,
+  };
+}
+
+function tallyBy<T>(items: T[], key: (t: T) => string): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const it of items) {
+    const k = key(it);
+    out[k] = (out[k] ?? 0) + 1;
+  }
+  return out;
 }

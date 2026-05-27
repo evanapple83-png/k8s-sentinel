@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@k8s-sentinel/agent-analyst": "workspace:*",
+    "@k8s-sentinel/agent-author": "workspace:*",
     "@k8s-sentinel/agent-collector": "workspace:*",
     "@k8s-sentinel/core": "workspace:*",
     "@k8s-sentinel/engine-claude": "workspace:*",

@@ -48,7 +48,36 @@ Tracks the phased plan in `BUILD.md §11`. Each phase ships and has a DoD.
       internet-exposed running as root" returns exactly the reachable, root,
       internet-exposed `payment-api` (frontend excluded). 14 analyst tests.
 
-## Phase 3 — Author + UI · Phase 4 — Hardening + Hermes
+## 🟡 Phase 3 — Author + UI (Features 3, 5, 6)
 
-Not started. Phase 3 next: Author agent (PDF/MD/JSON reports, remediation PRs,
-playbook library) + the Apple-like dashboard (6 screens) over SSE.
+**Phase 3a — Author agent + API (backend) ✅**
+
+- [x] `packages/agent-author`: propose-only Agent 3. Pure/deterministic, offline.
+  - [x] playbook library (`playbooks.ts`): pin-image · drop-privileged ·
+        restrict-rbac · add-network-policy · read-only-root-fs · node-hardening ·
+        runtime-detection, matched against the real normalized findings
+  - [x] reviewable remediations (`remediation.ts`): grouped + reachability-ranked
+        `RemediationProposal[]` + `buildPrBundle` (representative manifest diff +
+        ready-to-open PR body). Stable ids, propose-only — never applies
+  - [x] dependency-free unified-diff generator (`diff.ts`, LCS)
+  - [x] reports (`report.ts` + `pdf.ts`): one injection-safe model → Markdown /
+        JSON / Apple-like HTML / **dependency-free PDF** (no headless browser)
+  - [x] 14 author tests (matching · dedup/ranking · diff · render · PDF · injection)
+- [x] Author wired into the orchestrator → `fixes.proposed` audit entry
+- [x] `apps/api/src/server.ts`: node:http + **SSE** API (health · live scan stream ·
+      runs · findings · paths · fixes · report export · audit[+verify] · approve · ask)
+- [x] `apps/api/src/reporting.ts`: shared report/approve helpers (CLI + server)
+- [x] CLI: `sentinel report|fixes|approve|audit|serve`
+- [x] **DoD (backend):** e2e offline — `scan` → ranked findings + attack paths →
+      `report --format pdf` (valid 4-page PDF) / json / md → `fixes` → `approve`
+      writes a reviewable PR bundle → `audit --verify` chain intact (incl.
+      `author:fixes.proposed` + `user:fix.approved`). Verified over the CLI **and**
+      the HTTP/SSE server. 63 tests green.
+
+**Phase 3b — Apple-like dashboard (the 6 screens over SSE) — next.**
+Backend contract is in place (`apps/api/src/server.ts`); `apps/dashboard` still empty.
+
+## Phase 4 — Hardening + Hermes
+
+Not started. Prompt-injection hardening on scan input, sandbox separation, egress
+allow-list, Helm one-command install, and the `engine-hermes` air-gap adapter.

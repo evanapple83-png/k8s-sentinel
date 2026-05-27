@@ -7,14 +7,31 @@
  *   sentinel findings <runId>
  *   sentinel paths [runId]
  *   sentinel ask "<plain-English query>" [--run <runId>]
+ *   sentinel report [runId] [--format md|json|html|pdf] [--out <file>]
+ *   sentinel fixes [runId]
+ *   sentinel approve <fixId> [--run <runId>]
+ *   sentinel audit [--run <runId>] [--verify]
+ *   sentinel serve
  *
  * Runs read-only. Falls back to offline fixtures when no cluster/scanners are
  * present, so it always produces a result.
  */
+import { writeFileSync } from 'node:fs';
 import { silenceExperimentalWarnings } from './util/warnings.js';
 import { loadConfig } from './config.js';
 import { runScan } from './orchestrator.js';
 import { SqliteStore } from './store.js';
+import { createServer } from './server.js';
+import {
+  approveFix,
+  approvedFixIds,
+  auditSink,
+  loadRun,
+  proposalsForRun,
+  renderReport,
+  reportForRun,
+  type ReportFormat,
+} from './reporting.js';
 import { analyzeReachability, answerQuery } from '@k8s-sentinel/agent-analyst';
 import type { Severity } from '@k8s-sentinel/core';
 
@@ -45,10 +62,154 @@ async function main(): Promise<void> {
       return cmdPaths(rest[0]);
     case 'ask':
       return cmdAsk(rest);
+    case 'report':
+      return cmdReport(rest);
+    case 'fixes':
+      return cmdFixes(rest[0]);
+    case 'approve':
+      return cmdApprove(rest);
+    case 'audit':
+      return cmdAudit(rest);
+    case 'serve':
+      return cmdServe();
     default:
       printUsage();
       process.exitCode = command ? 1 : 0;
   }
+}
+
+async function cmdReport(args: string[]): Promise<void> {
+  let format: ReportFormat = 'md';
+  let out: string | undefined;
+  let runId: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
+    if (a === '--format' || a === '-f') format = args[++i] as ReportFormat;
+    else if (a === '--out' || a === '-o') out = args[++i];
+    else if (!a.startsWith('-')) runId ??= a;
+  }
+
+  const store = new SqliteStore(loadConfig().dbPath);
+  const id = runId ?? store.listRuns(1)[0]?.id;
+  if (!id) {
+    console.log('No runs yet. Try: sentinel scan');
+    store.close();
+    return;
+  }
+  const bundle = loadRun(store, id);
+  store.close();
+  if (!bundle) {
+    console.error(`sentinel: run ${id} not found`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const { body, ext } = renderReport(reportForRun(bundle), format);
+  if (out) {
+    writeFileSync(out, typeof body === 'string' ? body : Buffer.from(body));
+    console.log(`✓ wrote ${ext.toUpperCase()} report → ${out}`);
+    return;
+  }
+  if (typeof body !== 'string') {
+    console.error('sentinel: pdf is binary — pass --out <file.pdf>');
+    process.exitCode = 1;
+    return;
+  }
+  process.stdout.write(body);
+}
+
+async function cmdFixes(runId?: string): Promise<void> {
+  const store = new SqliteStore(loadConfig().dbPath);
+  const id = runId ?? store.listRuns(1)[0]?.id;
+  if (!id) {
+    console.log('No runs yet. Try: sentinel scan');
+    store.close();
+    return;
+  }
+  const bundle = loadRun(store, id);
+  store.close();
+  if (!bundle) {
+    console.error(`sentinel: run ${id} not found`);
+    process.exitCode = 1;
+    return;
+  }
+
+  const proposals = proposalsForRun(bundle);
+  const approved = await approvedFixIds(id);
+  console.log(`${BOLD}Remediations${RESET} ${DIM}(run ${id}, propose-only — nothing is applied)${RESET}`);
+  if (proposals.length === 0) console.log('  (none proposed)');
+  for (const p of proposals) {
+    const mark = approved.has(p.id) ? `${COLOR.low} approved ${RESET}` : `${DIM}proposed${RESET}`;
+    console.log(
+      `  ${DIM}${p.id}${RESET}  ${COLOR[p.severity]}${p.severity.toUpperCase().padEnd(8)}${RESET} ${p.title}  ${mark}`,
+    );
+    console.log(`     ${DIM}${p.kind} · ${p.path} · fixes ${p.findingIds.length} finding(s)${RESET}`);
+  }
+  console.log(`\n${DIM}approve one with: sentinel approve <fixId> --run ${id}${RESET}`);
+}
+
+async function cmdApprove(args: string[]): Promise<void> {
+  const runIdx = args.findIndex((a) => a === '--run');
+  const runId = runIdx >= 0 ? args[runIdx + 1] : undefined;
+  const fixId = args.find(
+    (a, i) => !a.startsWith('-') && (runIdx < 0 || (i !== runIdx && i !== runIdx + 1)),
+  );
+  if (!fixId) {
+    console.error('usage: sentinel approve <fixId> [--run <runId>]');
+    process.exitCode = 1;
+    return;
+  }
+
+  const store = new SqliteStore(loadConfig().dbPath);
+  const id = runId ?? store.listRuns(1)[0]?.id;
+  if (!id) {
+    console.log('No runs yet. Try: sentinel scan');
+    store.close();
+    return;
+  }
+  const result = await approveFix({ store, runId: id, fixId, actor: 'user' });
+  store.close();
+  if (!result) {
+    console.error(`sentinel: fix ${fixId} not found in run ${id}`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`${BOLD}✓ Approved${RESET} ${result.proposalId}`);
+  console.log(`  branch:  ${result.bundle.branch}`);
+  console.log(
+    `  bundle:  ${result.dir}/PR.md${result.bundle.files.length ? '  (+ changes.patch)' : ''}`,
+  );
+  console.log(`  ${DIM}Reviewable PR bundle written. Nothing was applied to your cluster.${RESET}`);
+}
+
+async function cmdAudit(args: string[]): Promise<void> {
+  const runIdx = args.findIndex((a) => a === '--run');
+  const runId = runIdx >= 0 ? args[runIdx + 1] : undefined;
+  const sink = auditSink();
+  const entries = await sink.list(runId);
+  console.log(`${BOLD}Audit trail${RESET}${runId ? ` ${DIM}(run ${runId})${RESET}` : ''}`);
+  for (const e of entries) {
+    const who = e.agent ? `${e.actor}:${e.agent}` : e.actor;
+    console.log(`  ${DIM}#${String(e.seq).padStart(3)} ${e.ts}${RESET}  ${who.padEnd(20)} ${e.action}`);
+  }
+  if (args.includes('--verify')) {
+    const v = await sink.verify();
+    console.log(
+      `\n${v.ok ? `${COLOR.low} chain intact ${RESET}` : `${COLOR.critical} BROKEN at #${v.brokenAt} ${RESET}`}`,
+    );
+  }
+  console.log(`\n${entries.length} entries.`);
+}
+
+function cmdServe(): void {
+  const config = loadConfig();
+  const server = createServer(config);
+  server.listen(config.apiPort, () => {
+    console.log(
+      `${BOLD}K8s Sentinel API${RESET} on http://localhost:${config.apiPort} ${DIM}(engine: ${config.engine})${RESET}`,
+    );
+    console.log(`${DIM}GET /api/scan/stream · /api/runs/:id · /:id/report?format=pdf · POST /api/fixes/:id/approve${RESET}`);
+  });
 }
 
 async function cmdScan(args: string[]): Promise<void> {
@@ -240,11 +401,18 @@ Usage:
   sentinel findings <runId>
   sentinel paths [runId]
   sentinel ask "<plain-English query>" [--run <runId>]
+  sentinel report [runId] [--format md|json|html|pdf] [--out <file>]
+  sentinel fixes [runId]
+  sentinel approve <fixId> [--run <runId>]
+  sentinel audit [--run <runId>] [--verify]
+  sentinel serve
 
 Examples:
   sentinel ask "show everything internet-exposed running as root"
-  sentinel ask "critical findings in prod"
-  sentinel paths`);
+  sentinel report --format pdf --out report.pdf
+  sentinel fixes
+  sentinel approve fix:1a2b3c4d
+  sentinel audit --verify`);
 }
 
 main().catch((err) => {
