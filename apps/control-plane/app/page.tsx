@@ -4,8 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RiskRing, rating } from '@/components/risk-ring';
 import { Stat, Bar } from '@/components/bits';
+import { EmptyState } from '@/components/placeholder';
 import type { Severity } from '@/lib/types';
-import { DEMO_FINDINGS, DEMO_PATHS, DEMO_PREV_RUN, DEMO_RUN } from '@/lib/mock';
+import { getActiveData, type SearchParamsInput } from '@/lib/active';
+import { DEMO_PREV_RUN } from '@/lib/mock';
 
 const SEV_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 const SEV_TONE: Record<Severity, string> = {
@@ -16,9 +18,34 @@ const SEV_TONE: Record<Severity, string> = {
   info: 'var(--muted-foreground)',
 };
 
-export default function OverviewPage() {
-  const findings = DEMO_FINDINGS;
-  const risk = DEMO_RUN.riskScore ?? 0;
+const fmt = (iso: string) =>
+  new Date(iso).toLocaleString('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+export default async function OverviewPage({
+  searchParams,
+}: {
+  searchParams?: SearchParamsInput;
+}) {
+  const data = await getActiveData(searchParams);
+
+  if (!data.snapshot) {
+    return (
+      <EmptyState
+        title="Overview"
+        description="Risk posture for your active cluster."
+      />
+    );
+  }
+
+  const { run, findings, paths } = data.snapshot;
+  const risk = run.riskScore ?? 0;
+  const clusterName =
+    data.clusters.find((c) => c.id === run.clusterId)?.name ?? 'cluster';
 
   const bySeverity = SEV_ORDER.map((s) => ({
     sev: s,
@@ -37,7 +64,15 @@ export default function OverviewPage() {
   const reachable = findings.filter((f) => f.reachable).length;
   const critical = findings.filter((f) => f.severity === 'critical').length;
   const high = findings.filter((f) => f.severity === 'high').length;
-  const deltaFindings = DEMO_RUN.findingCount - DEMO_PREV_RUN.findingCount;
+
+  // Delta vs. the previous run: from the demo prev-run, or the next run in the
+  // (newest-first) live list.
+  const prevCount = data.demo
+    ? DEMO_PREV_RUN.findingCount
+    : data.runs.find((r) => r.id !== run.id && r.createdAt < run.createdAt)
+        ?.findingCount;
+  const deltaFindings =
+    prevCount == null ? null : run.findingCount - prevCount;
 
   return (
     <div className="mx-auto max-w-6xl space-y-7">
@@ -45,7 +80,7 @@ export default function OverviewPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
           <p className="text-sm text-muted-foreground">
-            prod-eu-1 · scanned 27 May 09:14 · engine {DEMO_RUN.engine}
+            {clusterName} · scanned {fmt(run.createdAt)} · engine {run.engine}
           </p>
         </div>
         <Button>Run scan</Button>
@@ -57,7 +92,7 @@ export default function OverviewPage() {
           <div className="text-center">
             <div className="text-sm font-medium capitalize">{rating(risk)} risk</div>
             <div className="text-xs text-muted-foreground">
-              {deltaFindings === 0
+              {deltaFindings == null || deltaFindings === 0
                 ? 'no change since last scan'
                 : `${deltaFindings > 0 ? '+' : ''}${deltaFindings} findings since last scan`}
             </div>
@@ -105,7 +140,7 @@ export default function OverviewPage() {
             </Link>
           </CardHeader>
           <CardContent className="space-y-3">
-            {DEMO_PATHS.map((p) => (
+            {paths.map((p) => (
               <div key={p.id} className="rounded-lg border p-3">
                 <div className="mb-1 flex items-center justify-between">
                   <span className="font-mono text-[11px] uppercase text-muted-foreground">
@@ -121,6 +156,9 @@ export default function OverviewPage() {
                 <p className="line-clamp-2 text-sm text-muted-foreground">{p.narrative}</p>
               </div>
             ))}
+            {paths.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No attack paths in this run.</p>
+            ) : null}
           </CardContent>
         </Card>
 

@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import type { ReactNode } from 'react';
+import { usePathname, useRouter, useSearchParams } from 'next/navigation';
+import { Suspense, type ReactNode } from 'react';
 import {
   Activity,
   ListChecks,
@@ -19,6 +19,27 @@ import { ThemeToggle } from '@/components/theme-toggle';
 import { doSignOut } from '@/app/actions';
 
 export type ShellUser = { name: string; email: string; role: string } | null;
+
+/** Minimal, serializable picker options passed from the server layout. */
+export interface ShellNav {
+  demo: boolean;
+  accounts: Array<{ id: string; name: string }>;
+  clusters: Array<{ id: string; name: string; status: string }>;
+  runs: Array<{ id: string; label: string }>;
+  activeAccountId: string | null;
+  activeClusterId: string | null;
+  activeRunId: string | null;
+}
+
+const DEMO_NAV: ShellNav = {
+  demo: true,
+  accounts: [],
+  clusters: [],
+  runs: [],
+  activeAccountId: null,
+  activeClusterId: null,
+  activeRunId: null,
+};
 
 const NAV = [
   { href: '/', label: 'Overview', icon: Activity },
@@ -79,7 +100,148 @@ function Picker({ label, children }: { label: string; children: ReactNode }) {
 const selectCls =
   'w-full rounded-md border bg-background px-2.5 py-1.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring';
 
-export function AppShell({ children, user }: { children: ReactNode; user?: ShellUser }) {
+/** Neutral, disabled picker shells shown while LivePickers suspends. */
+function PickerSkeleton() {
+  return (
+    <>
+      {(['Account', 'Cluster', 'Active run'] as const).map((label) => (
+        <Picker key={label} label={label}>
+          <select className={selectCls} disabled>
+            <option>…</option>
+          </select>
+        </Picker>
+      ))}
+    </>
+  );
+}
+
+/** Demo pickers — disabled preview values + hint. No URL/router reads. */
+function DemoPickers() {
+  return (
+    <>
+      <Picker label="Account">
+        <select className={selectCls} disabled>
+          <option>Acme Inc.</option>
+        </select>
+      </Picker>
+      <Picker label="Cluster">
+        <select className={selectCls} disabled>
+          <option>prod-eu-1 · connected</option>
+        </select>
+      </Picker>
+      <Picker label="Active run">
+        <select className={selectCls} disabled>
+          <option>27 May 09:14 · risk 100</option>
+        </select>
+      </Picker>
+      <div className="rounded-md border border-dashed px-2.5 py-1.5 text-[11px] text-muted-foreground">
+        Showing <span className="font-medium text-foreground">demo data</span> — connect a cluster
+        for live results.
+      </div>
+    </>
+  );
+}
+
+/**
+ * Live pickers. Isolated so the `useSearchParams` CSR bailout is contained to a
+ * <Suspense> boundary (it would otherwise opt the whole static shell out of
+ * prerendering, breaking the demo build).
+ */
+function LivePickers({ nav }: { nav: ShellNav }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // The selected value reflects the URL first (the user's explicit pick), then
+  // the server-resolved default. The layout resolves option lists from the
+  // defaults, so the displayed selection stays correct even on a deep link.
+  const selected = (key: 'account' | 'cluster' | 'run', fallback: string | null) =>
+    searchParams.get(key) ?? fallback ?? '';
+
+  // Navigate to the same route with a swapped picker query param. Changing the
+  // account/cluster resets the downstream selections so the server resolves a
+  // fresh default.
+  function pick(key: 'account' | 'cluster' | 'run', value: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set(key, value);
+    if (key === 'account') {
+      params.delete('cluster');
+      params.delete('run');
+    } else if (key === 'cluster') {
+      params.delete('run');
+    }
+    router.push(`${pathname}?${params.toString()}`);
+  }
+
+  return (
+    <>
+      <Picker label="Account">
+        <select
+          className={selectCls}
+          value={selected('account', nav.activeAccountId)}
+          disabled={nav.accounts.length <= 1}
+          onChange={(e) => pick('account', e.target.value)}
+        >
+          {nav.accounts.length === 0 ? <option value="">No accounts</option> : null}
+          {nav.accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+      </Picker>
+      <Picker label="Cluster">
+        <select
+          className={selectCls}
+          value={selected('cluster', nav.activeClusterId)}
+          disabled={nav.clusters.length === 0}
+          onChange={(e) => pick('cluster', e.target.value)}
+        >
+          {nav.clusters.length === 0 ? <option value="">No clusters</option> : null}
+          {nav.clusters.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name} · {c.status}
+            </option>
+          ))}
+        </select>
+      </Picker>
+      <Picker label="Active run">
+        <select
+          className={selectCls}
+          value={selected('run', nav.activeRunId)}
+          disabled={nav.runs.length === 0}
+          onChange={(e) => pick('run', e.target.value)}
+        >
+          {nav.runs.length === 0 ? <option value="">No runs yet</option> : null}
+          {nav.runs.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.label}
+            </option>
+          ))}
+        </select>
+      </Picker>
+      {nav.clusters.length === 0 ? (
+        <div className="rounded-md border border-dashed px-2.5 py-1.5 text-[11px] text-muted-foreground">
+          No clusters connected —{' '}
+          <Link href="/connect" className="font-medium text-foreground hover:underline">
+            connect one
+          </Link>{' '}
+          to see live results.
+        </div>
+      ) : null}
+    </>
+  );
+}
+
+export function AppShell({
+  children,
+  user,
+  nav = DEMO_NAV,
+}: {
+  children: ReactNode;
+  user?: ShellUser;
+  nav?: ShellNav;
+}) {
   const pathname = usePathname();
 
   // Auth screens render without the app chrome.
@@ -103,28 +265,18 @@ export function AppShell({ children, user }: { children: ReactNode; user?: Shell
           <ThemeToggle />
         </div>
 
-        {/* Account / cluster / run selection — wired to Supabase in 1D.
-            Showing demo data so every screen previews the real product. */}
+        {/* Account / cluster / run selection. Live mode (auth + Supabase +
+            signed-in) drives these from the tenant data layer; demo mode keeps
+            the disabled preview values + hint so the hosted preview works with
+            zero env. */}
         <div className="space-y-2.5">
-          <Picker label="Account">
-            <select className={selectCls} disabled>
-              <option>Acme Inc.</option>
-            </select>
-          </Picker>
-          <Picker label="Cluster">
-            <select className={selectCls} disabled>
-              <option>prod-eu-1 · connected</option>
-            </select>
-          </Picker>
-          <Picker label="Active run">
-            <select className={selectCls} disabled>
-              <option>27 May 09:14 · risk 100</option>
-            </select>
-          </Picker>
-          <div className="rounded-md border border-dashed px-2.5 py-1.5 text-[11px] text-muted-foreground">
-            Showing <span className="font-medium text-foreground">demo data</span> — connect a
-            cluster for live results.
-          </div>
+          {nav.demo ? (
+            <DemoPickers />
+          ) : (
+            <Suspense fallback={<PickerSkeleton />}>
+              <LivePickers nav={nav} />
+            </Suspense>
+          )}
         </div>
 
         <nav className="space-y-1">

@@ -1,7 +1,8 @@
 import { Globe, Box, Bug, KeyRound, ShieldAlert, Network } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
+import { EmptyState } from '@/components/placeholder';
 import type { AttackStep } from '@/lib/types';
-import { DEMO_PATHS } from '@/lib/mock';
+import { getActiveData, type SearchParamsInput } from '@/lib/active';
 
 const KIND_META: Record<string, { icon: typeof Box; label: string; tone: string }> = {
   exposed: { icon: Globe, label: 'Exposed', tone: 'var(--critical)' },
@@ -11,7 +12,24 @@ const KIND_META: Record<string, { icon: typeof Box; label: string; tone: string 
   'secret-access': { icon: KeyRound, label: 'Secret access', tone: 'var(--critical)' },
 };
 
-export default function PathsPage() {
+export default async function PathsPage({
+  searchParams,
+}: {
+  searchParams?: SearchParamsInput;
+}) {
+  const data = await getActiveData(searchParams);
+  const paths = data.snapshot?.paths ?? [];
+
+  if (!data.snapshot || paths.length === 0) {
+    return (
+      <EmptyState
+        title="Attack Paths"
+        description="Findings correlated into ranked chains: exposed → running → vulnerable → over-privileged → secret access."
+        message="No attack paths yet for this cluster."
+      />
+    );
+  }
+
   return (
     <div className="mx-auto max-w-6xl space-y-5">
       <header>
@@ -22,7 +40,7 @@ export default function PathsPage() {
         </p>
       </header>
 
-      {DEMO_PATHS.map((p) => (
+      {paths.map((p) => (
         <Card key={p.id}>
           <CardHeader className="gap-2">
             <div className="flex items-center justify-between">
