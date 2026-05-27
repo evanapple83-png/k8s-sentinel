@@ -1,11 +1,13 @@
 import 'server-only';
 import { supabaseAdmin } from './supabase/server';
+import type { PostureSnapshot } from './wire';
 import type {
   Account,
   AttackPath,
   AuditEntry,
   Cluster,
   Finding,
+  Fix,
   Membership,
   Role,
   RunRecord,
@@ -165,17 +167,159 @@ export async function getRunSnapshot(
     return null;
   }
 
-  const [{ data: findings }, { data: paths }] = await Promise.all([
+  const [{ data: findings }, { data: paths }, { data: fixes }] = await Promise.all([
     db.from('finding').select('*').eq('run_id', runId),
     db.from('attack_path').select('*').eq('run_id', runId),
+    db.from('remediation').select('*').eq('run_id', runId).order('priority', { ascending: false }),
   ]);
 
   return {
     run: mapRun(run),
     findings: (findings ?? []).map(mapFinding),
     paths: (paths ?? []).map(mapPath),
-    fixes: [], // proposals are streamed in a later phase
+    fixes: (fixes ?? []).map(mapFix),
   };
+}
+
+/**
+ * Ingest a posture push from the relay (hybrid mode, fase 2). NOT user-scoped:
+ * the relay authenticated the agent and the ingest route authenticated the
+ * relay; the account is resolved from the cluster. Idempotent — re-ingesting a
+ * run replaces its findings/paths/remediations and mirrors only new audit
+ * entries. Stores normalized posture only (DATA-BOUNDARY.md): no secrets, no
+ * raw manifests, no credentials.
+ */
+export async function ingestSnapshot(
+  clusterId: string,
+  snap: PostureSnapshot,
+): Promise<{ runId: string; accountId: string }> {
+  const db = supabaseAdmin();
+
+  const { data: cluster, error: cErr } = await db
+    .from('cluster')
+    .select('id, account_id')
+    .eq('id', clusterId)
+    .maybeSingle();
+  if (cErr) throw cErr;
+  if (!cluster) throw new AccessError('unknown cluster');
+  const accountId = cluster.account_id as string;
+  const runId = snap.run.id;
+
+  const { error: rErr } = await db.from('run').upsert(
+    {
+      id: runId,
+      cluster_id: clusterId,
+      status: snap.run.status,
+      engine: snap.run.engine,
+      used_fixtures: snap.run.usedFixtures,
+      finding_count: snap.run.findingCount,
+      path_count: snap.run.pathCount,
+      risk_score: snap.run.riskScore == null ? null : Math.round(snap.run.riskScore),
+      summary: snap.run.summary,
+      created_at: snap.run.startedAt,
+    },
+    { onConflict: 'id' },
+  );
+  if (rErr) throw rErr;
+
+  // Replace child rows so a re-pushed run never accumulates duplicates.
+  await Promise.all([
+    db.from('finding').delete().eq('run_id', runId),
+    db.from('attack_path').delete().eq('run_id', runId),
+    db.from('remediation').delete().eq('run_id', runId),
+  ]);
+
+  if (snap.findings.length) {
+    const { error } = await db.from('finding').insert(
+      snap.findings.map((f) => ({
+        id: f.id,
+        run_id: runId,
+        source: f.source,
+        rule_id: f.ruleId,
+        title: f.title,
+        description: f.description ?? '',
+        severity: f.severity,
+        resource: f.resource,
+        reachable: f.reachable ?? null,
+        exploit_score: f.exploitScore == null ? null : Math.round(f.exploitScore),
+        attack_path_id: f.attackPathId ?? null,
+        controls: f.controls ?? null,
+        base_score: f.baseScore ?? null,
+      })),
+    );
+    if (error) throw error;
+  }
+
+  if (snap.paths.length) {
+    const { error } = await db.from('attack_path').insert(
+      snap.paths.map((p) => ({
+        id: p.id,
+        run_id: runId,
+        narrative: p.narrative,
+        score: Math.round(p.score),
+        entry_point: p.entryPoint ?? null,
+        steps: p.steps,
+        finding_ids: p.findingIds,
+      })),
+    );
+    if (error) throw error;
+  }
+
+  if (snap.remediations.length) {
+    const { error } = await db.from('remediation').insert(
+      snap.remediations.map((m) => ({
+        id: m.id,
+        run_id: runId,
+        playbook_id: m.playbookId,
+        title: m.title,
+        severity: m.severity,
+        kind: m.kind,
+        rationale: m.rationale,
+        path: m.path,
+        diff: m.diff,
+        manual_steps: m.manualSteps,
+        controls: m.controls,
+        finding_ids: m.findingIds,
+        attack_path_id: m.attackPathId ?? null,
+        priority: Math.round(m.priority),
+        branch: m.branch,
+        pr_title: m.prTitle,
+        pr_body: m.prBody,
+      })),
+    );
+    if (error) throw error;
+  }
+
+  // Mirror only NEW audit entries (idempotent; seq is unique within the run).
+  if (snap.audit.length) {
+    const seqs = snap.audit.map((a) => a.seq);
+    const { data: existing } = await db.from('audit_entry').select('seq').eq('run_id', runId).in('seq', seqs);
+    const have = new Set((existing ?? []).map((e) => Number(e.seq)));
+    const toInsert = snap.audit
+      .filter((a) => !have.has(a.seq))
+      .map((a) => ({
+        account_id: accountId,
+        cluster_id: clusterId,
+        run_id: runId,
+        seq: a.seq,
+        ts: a.ts,
+        actor: a.actor,
+        agent: a.agent ?? null,
+        action: a.action,
+        detail: null,
+      }));
+    if (toInsert.length) {
+      const { error } = await db.from('audit_entry').insert(toInsert);
+      if (error) throw error;
+    }
+  }
+
+  await db
+    .from('cluster')
+    .update({ last_seen_at: new Date().toISOString(), status: 'connected' })
+    .eq('id', clusterId);
+
+  return { runId, accountId };
 }
 
 // --- Audit ------------------------------------------------------------------
@@ -387,5 +531,27 @@ function mapPath(r: Record<string, unknown>): AttackPath {
     entryPoint: (r.entry_point as string) ?? undefined,
     steps: (r.steps as AttackPath['steps']) ?? [],
     findingIds: (r.finding_ids as string[]) ?? [],
+  };
+}
+
+function mapFix(r: Record<string, unknown>): Fix {
+  return {
+    id: r.id as string,
+    playbookId: r.playbook_id as string,
+    title: r.title as string,
+    severity: r.severity as Fix['severity'],
+    kind: r.kind as Fix['kind'],
+    rationale: (r.rationale as string) ?? '',
+    path: (r.path as string) ?? '',
+    diff: (r.diff as string) ?? '',
+    manualSteps: (r.manual_steps as string[]) ?? [],
+    controls: (r.controls as Fix['controls']) ?? [],
+    findingIds: (r.finding_ids as string[]) ?? [],
+    attackPathId: (r.attack_path_id as string) ?? undefined,
+    priority: Number(r.priority ?? 0),
+    status: 'proposed',
+    branch: (r.branch as string) ?? '',
+    prTitle: (r.pr_title as string) ?? '',
+    prBody: (r.pr_body as string) ?? '',
   };
 }

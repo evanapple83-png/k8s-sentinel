@@ -1,0 +1,40 @@
+# K8s Sentinel relay — Fly.io config. The relay must be an always-on, stateful
+# process (it holds live WebSocket tunnels), which is exactly what Vercel's
+# serverless functions can't do — hence Fly.
+#
+# Deploy from the REPO ROOT (build context needs the whole workspace):
+#   fly launch --no-deploy --config apps/relay/fly.toml --dockerfile apps/relay/Dockerfile
+#   fly secrets set -c apps/relay/fly.toml \
+#       RELAY_CONTROL_SECRET=… RELAY_INGEST_SECRET=… \
+#       CONTROL_PLANE_URL=https://your-control-plane.vercel.app
+#   fly deploy --config apps/relay/fly.toml --dockerfile apps/relay/Dockerfile
+
+app = "k8s-sentinel-relay"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  RELAY_IDLE_MS = "90000"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "off"   # keep tunnels alive; do not idle-stop
+  auto_start_machines = true
+  min_machines_running = 1
+
+  # WebSocket connections are long-lived; the relay's own ping/pong + idle sweep
+  # handle liveness. Health is the plain HTTP /healthz.
+  [[http_service.checks]]
+    method = "GET"
+    path = "/healthz"
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

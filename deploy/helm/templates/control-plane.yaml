@@ -29,6 +29,10 @@ spec:
         - name: control-plane
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if eq .Values.mode "hybrid" }}
+          # Hybrid mode: run the read-only agent, which dials OUT to the relay.
+          command: ["node", "dist/cli.js", "agent"]
+          {{- end }}
           securityContext:
             {{- toYaml .Values.containerSecurityContext | nindent 12 }}
           env:
@@ -54,9 +58,35 @@ spec:
                   name: {{ .Values.engine.apiKeySecret }}
                   key: ANTHROPIC_API_KEY
             {{- end }}
+            {{- if eq .Values.mode "hybrid" }}
+            - name: RELAY_URL
+              value: {{ required "relay.url is required when mode=hybrid" .Values.relay.url | quote }}
+            - name: SENTINEL_CLUSTER_NAME
+              value: {{ .Release.Name | quote }}
+            {{- if .Values.relay.installTokenSecret }}
+            - name: SENTINEL_INSTALL_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.relay.installTokenSecret }}
+                  key: SENTINEL_INSTALL_TOKEN
+            {{- else if .Values.relay.installToken }}
+            - name: SENTINEL_INSTALL_TOKEN
+              value: {{ .Values.relay.installToken | quote }}
+            {{- end }}
+            {{- if .Values.relay.clientCertSecret }}
+            - name: RELAY_CLIENT_CERT
+              value: /etc/sentinel/relay-certs/tls.crt
+            - name: RELAY_CLIENT_KEY
+              value: /etc/sentinel/relay-certs/tls.key
+            - name: RELAY_CA
+              value: /etc/sentinel/relay-certs/ca.crt
+            {{- end }}
+            {{- end }}
+          {{- if ne .Values.mode "hybrid" }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
+          {{- end }}
           resources:
             {{- toYaml .Values.controlPlane.resources | nindent 12 }}
           volumeMounts:
@@ -64,8 +94,18 @@ spec:
               mountPath: /tmp
             - name: data
               mountPath: /data
+            {{- if and (eq .Values.mode "hybrid") .Values.relay.clientCertSecret }}
+            - name: relay-certs
+              mountPath: /etc/sentinel/relay-certs
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
         - name: data
           emptyDir: {}
+        {{- if and (eq .Values.mode "hybrid") .Values.relay.clientCertSecret }}
+        - name: relay-certs
+          secret:
+            secretName: {{ .Values.relay.clientCertSecret }}
+        {{- end }}

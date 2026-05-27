@@ -6,7 +6,7 @@ import { Check, Copy, Loader2, PlugZap, ShieldAlert } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { generateInstall, pollConnection } from './actions';
+import { generateInstall, pollConnection, triggerScan } from './actions';
 
 type Phase = 'loading' | 'ready' | 'connected' | 'forbidden' | 'error';
 
@@ -14,6 +14,8 @@ export function ConnectClient() {
   const [phase, setPhase] = useState<Phase>('loading');
   const [command, setCommand] = useState('');
   const [clusterName, setClusterName] = useState('');
+  const [clusterId, setClusterId] = useState('');
+  const [scanState, setScanState] = useState<'idle' | 'running' | 'done' | string>('idle');
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -44,6 +46,7 @@ export function ConnectClient() {
       const res = await pollConnection();
       if (res.connected) {
         setClusterName(res.cluster.name);
+        setClusterId(res.cluster.id);
         setPhase('connected');
         stopPolling();
       }
@@ -61,6 +64,12 @@ export function ConnectClient() {
     }
   }
 
+  async function scanNow() {
+    setScanState('running');
+    const res = await triggerScan(clusterId);
+    setScanState(res.ok ? 'done' : `couldn’t start a scan (${res.reason})`);
+  }
+
   if (phase === 'connected') {
     return (
       <Card>
@@ -75,9 +84,27 @@ export function ConnectClient() {
               started automatically. Results appear on the Overview shortly.
             </p>
           </div>
-          <Link href="/" className={cn(buttonVariants())}>
-            Go to Overview
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link href="/" className={cn(buttonVariants())}>
+              Go to Overview
+            </Link>
+            <Button variant="ghost" onClick={scanNow} disabled={scanState === 'running'}>
+              {scanState === 'running' ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" /> Scanning…
+                </>
+              ) : (
+                'Scan now'
+              )}
+            </Button>
+          </div>
+          {scanState !== 'idle' && scanState !== 'running' && (
+            <p className="text-xs text-muted-foreground">
+              {scanState === 'done'
+                ? 'Scan started — results appear on the Overview shortly.'
+                : scanState}
+            </p>
+          )}
         </CardContent>
       </Card>
     );

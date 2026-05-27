@@ -12,6 +12,7 @@
  *   sentinel approve <fixId> [--run <runId>]
  *   sentinel audit [--run <runId>] [--verify]
  *   sentinel serve
+ *   sentinel agent            (hybrid mode: dial the relay, serve commands)
  *
  * Runs read-only. Falls back to offline fixtures when no cluster/scanners are
  * present, so it always produces a result.
@@ -34,6 +35,7 @@ import {
 } from './reporting.js';
 import { analyzeReachability, answerQuery } from '@k8s-sentinel/agent-analyst';
 import type { Severity } from '@k8s-sentinel/core';
+import { runAgent } from './tunnel/agent.js';
 
 silenceExperimentalWarnings();
 
@@ -72,6 +74,8 @@ async function main(): Promise<void> {
       return cmdAudit(rest);
     case 'serve':
       return cmdServe();
+    case 'agent':
+      return runAgent();
     default:
       printUsage();
       process.exitCode = command ? 1 : 0;
@@ -406,6 +410,7 @@ Usage:
   sentinel approve <fixId> [--run <runId>]
   sentinel audit [--run <runId>] [--verify]
   sentinel serve
+  sentinel agent                       (hybrid mode: dial RELAY_URL, serve commands)
 
 Examples:
   sentinel ask "show everything internet-exposed running as root"

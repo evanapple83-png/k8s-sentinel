@@ -125,3 +125,41 @@ Tracks the phased plan in `BUILD.md §11`. Each phase ships and has a DoD.
 
 > **MVP complete — all eight features present. Claude (default) and Hermes
 > (air-gapped) are drop-in interchangeable behind the engine boundary.**
+
+## ✅ Phase 5 — Hybrid hosted control-plane
+
+**UI track (1A–1F) ✅** — `apps/control-plane` (Next 16 + Supabase + NextAuth):
+scaffold, multi-tenant schema + RLS, the 6 product screens, SSO + TOTP MFA +
+roles, install-token onboarding, live tenant-scoped data, permissions UX +
+`docs/DATA-BOUNDARY.md`. Dual-mode: demo (no env) ↔ live (Supabase).
+
+**fase 2 — relay + live data-plane ✅**
+
+- [x] `packages/relay-protocol`: self-contained, zod-validated wire contract
+      (the trust boundary). Discriminated message union, size-capped
+      `PostureSnapshot`, codec (`encode`/`decode`), injectable `Transport` +
+      in-memory pair. 10 tests.
+- [x] `apps/relay`: **stateless** WebSocket forwarder (Fly.io). Registry keyed by
+      clusterId, pluggable mTLS verifier (CN = clusterId), control↔agent routing
+      with anti-spoofing re-stamping, idle sweep, an `onSnapshot` ingest webhook,
+      and an HTTP `/command` RPC bridge (so a serverless control plane drives a
+      cluster without holding a socket). Persists no payloads. 18 tests + real-
+      socket + HTTP data-plane smokes.
+- [x] `apps/api` tunnel-client (`sentinel agent`): dials OUT (no inbound port),
+      registers (install token / mTLS), serves down-commands via the SAME
+      orchestrator/reporting paths as the SSE server, streams posture up.
+      Reconnect/backoff. 11 tests.
+- [x] Control-plane ingest: `ingestSnapshot` + migration `0004` (remediations)
+      → real run/findings/paths/fixes land in tenant tables (replacing the
+      placeholder run); re-validated against a local wire schema; "Scan now"
+      triggers a command through the relay bridge.
+- [x] Deploy: relay `Dockerfile` + `fly.toml`, `deploy/relay/relay-ca.sh` (mTLS
+      CA + per-cluster cert issuance), Helm `mode=hybrid` (agent dial-out + cert
+      mount + relay egress), env docs, and the runbook in `DEPLOY.md §3`.
+- [x] **DoD:** end-to-end over real sockets/HTTP — agent dials the relay,
+      registers, a control command drives a scan, and the posture flows up the
+      tunnel and through the ingest webhook into the hosted store, all with the
+      clusterId relay-stamped (no tenant spoofing). 119 tests green.
+
+> Remaining to go fully live: provision Fly + a live Supabase + run the CA, then
+> follow `DEPLOY.md §3` (needs the user's accounts).

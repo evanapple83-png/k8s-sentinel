@@ -25,11 +25,14 @@
     "@k8s-sentinel/core": "workspace:*",
     "@k8s-sentinel/engine-claude": "workspace:*",
     "@k8s-sentinel/engine-hermes": "workspace:*",
+    "@k8s-sentinel/relay-protocol": "workspace:*",
     "@k8s-sentinel/tools-mcp": "workspace:*",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"

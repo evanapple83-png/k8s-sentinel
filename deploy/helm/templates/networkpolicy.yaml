@@ -1,5 +1,6 @@
 {{- if .Values.egress.enabled }}
-{{- $airgap := eq .Values.engine.kind "hermes" }}
+{{- /* Air-gap only when the engine is local AND we're not dialing a hosted relay. */}}
+{{- $airgap := and (eq .Values.engine.kind "hermes") (ne .Values.mode "hybrid") }}
 # Default-deny egress with an explicit allow-list (BUILD.md §10).
 #
 # - Always: DNS, plus in-cluster / private-CIDR traffic on 443 (kube-apiserver,
@@ -42,7 +43,7 @@ spec:
         - protocol: TCP
           port: {{ .Values.egress.localModelPort }}
   {{- if not $airgap }}
-    # CLAUDE mode only: reach the managed model API over 443.
+    # Connected mode: reach the managed model API and/or the hosted relay over 443.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

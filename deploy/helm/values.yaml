@@ -8,6 +8,25 @@ image:
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
+# --- Deployment mode -------------------------------------------------------
+# "cluster-local" (default): the full product + dashboard run inside the
+#   cluster; nothing leaves it (pairs naturally with engine.kind=hermes).
+# "hybrid": only a read-only agent runs in-cluster; it dials OUT to the hosted
+#   relay (no inbound port) and the web UI is hosted by us. See relay.* below
+#   and docs/DATA-BOUNDARY.md.
+mode: cluster-local
+
+# Hybrid mode: where and how the in-cluster agent dials the relay.
+relay:
+  url: "" # wss://relay.k8s-sentinel.example  (required when mode=hybrid)
+  # First-boot, single-use install token. For real installs prefer
+  # installTokenSecret over an inline value (which lands in the manifest).
+  installToken: ""
+  installTokenSecret: "" # existing Secret with key SENTINEL_INSTALL_TOKEN
+  # Optional mTLS client material: an existing Secret carrying tls.crt / tls.key
+  # (per-cluster client cert) and ca.crt (relay/CA bundle to trust).
+  clientCertSecret: ""
+
 # --- Engine ----------------------------------------------------------------
 engine:
   # "claude" (default) or "hermes" (air-gapped, Phase 4). Selecting "hermes"
