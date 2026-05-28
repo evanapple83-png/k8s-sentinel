@@ -139,14 +139,16 @@ RUN mkdir -p /app/data /app/argus-out \
  && chown -R 65532:65532 /app/data /app/argus-out
 
 # Build-time sanity: both stacks import + show their usage screens. Does NOT
-# touch a cluster; only proves the image is wired correctly. Verbose on
-# purpose — when a sanity check fails inside the buildx layer, stdout
-# tells us which one without re-running with --progress=plain.
+# touch a cluster; only proves the image is wired correctly. The TS CLI's
+# `--help` *prints* the usage banner but exits 1 (legacy behaviour — args
+# parser treats `--help` as "unknown command"). We assert the banner appears
+# via grep instead of trusting the exit code. Scanners are stricter: any
+# non-zero is a real packaging bug.
 RUN set -e; \
-    echo "::: node CLI :::"     && node /app/dist/cli.js --help; \
-    echo "::: argus CLI :::"    && python3 -m argus.cli scan --help; \
+    echo "::: node CLI :::"     && (node /app/dist/cli.js --help 2>&1 || true) | grep -q "K8s Sentinel"; \
+    echo "::: argus CLI :::"    && python3 -m argus.cli scan --help >/dev/null; \
     echo "::: trivy :::"        && trivy --version; \
-    echo "::: kube-bench :::"   && kube-bench --help; \
+    echo "::: kube-bench :::"   && kube-bench --help >/dev/null; \
     echo "::: kubescape :::"    && (kubescape version || true)
 
 USER 65532:65532
