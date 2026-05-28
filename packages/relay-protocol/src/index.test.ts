@@ -145,6 +145,54 @@ describe('codec', () => {
     // @ts-expect-error — deliberately malformed to prove encode guards
     expect(() => encode({ t: 'ping' })).toThrow();
   });
+
+  it('accepts a snapshot carrying v3 intel + choke-points', () => {
+    const snap = sampleSnapshot();
+    snap.intel = {
+      source: 'live:cisa-kev',
+      version: '2026.05.27',
+      kevCount: 1607,
+      epssCount: 218_543,
+    };
+    snap.chokePoints = [
+      {
+        id: 'cp-1',
+        control: { type: 'patch', ref: 'CVE-2026-31337', workload: 'payments/invoice-api' },
+        breaks: 4,
+        totalPaths: 4,
+        targets: ['secret:payments/db-credentials', 'CLUSTER-ADMIN'],
+        severity: 'critical',
+        description: 'Patch CVE-2026-31337 on payments/invoice-api',
+        priority: 4,
+      },
+    ];
+    expect(() =>
+      decode(encode({ t: 'snapshot', clusterId: 'c1', snapshot: snap })),
+    ).not.toThrow();
+  });
+
+  it('caps choke-point arrays (DoS guard)', () => {
+    const snap = sampleSnapshot();
+    snap.chokePoints = Array.from({ length: 257 }, (_, i) => ({
+      id: `cp-${i}`,
+      control: { type: 'patch' },
+      breaks: 1,
+      totalPaths: 1,
+      targets: [],
+      severity: 'low' as const,
+      description: 'x',
+      priority: 1,
+    }));
+    expect(PostureSnapshotSchema.safeParse(snap).success).toBe(false);
+  });
+
+  it('still validates pre-v3 snapshots that omit intel + chokePoints', () => {
+    const snap = sampleSnapshot();
+    // Sanity: the baseline fixture has no v3 fields and must keep validating.
+    expect('intel' in snap).toBe(false);
+    expect('chokePoints' in snap).toBe(false);
+    expect(PostureSnapshotSchema.safeParse(snap).success).toBe(true);
+  });
 });
 
 describe('memory transport pair', () => {

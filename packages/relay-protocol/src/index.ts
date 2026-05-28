@@ -111,6 +111,55 @@ export const WireAttackPathSchema = z.object({
   findingIds: z.array(ShortStr()).max(2048),
 });
 
+/**
+ * Choke-point control surfaced by the v3 attack-graph engine — applying this
+ * SINGLE control breaks N active attack paths. Distinct from a remediation
+ * because it carries the graph-derived `breaks` counter and the explicit list
+ * of crown-jewel `targets` the cut-off paths were headed to. ARGUS doesn't
+ * emit a diff for these (manual fix), so the Fix-table form would be a poor
+ * fit; the dashboard renders them in their own "Apply first" panel.
+ */
+export const ChokeControlSchema = z.object({
+  type: ShortStr(64),
+  ref: ShortStr(128).optional(),
+  workload: ShortStr(256).optional(),
+  sa: ShortStr(256).optional(),
+  what: ShortStr(128).optional(),
+  role: ShortStr(256).optional(),
+});
+
+export const WireChokePointSchema = z.object({
+  id: ShortStr(),
+  control: ChokeControlSchema,
+  /** How many active attack paths this single control eliminates. */
+  breaks: z.number().int().nonnegative(),
+  /** Total paths active at scan time (denominator for "breaks/total"). */
+  totalPaths: z.number().int().nonnegative(),
+  /** Crown jewels the broken paths were headed to (e.g. secret:ns/name). */
+  targets: z.array(ShortStr(256)).max(64),
+  severity: SeveritySchema,
+  /** One-line human title (e.g. "Patch CVE-2026-31337 on payments/invoice-api"). */
+  description: Str(4096),
+  /** Higher = apply first. Defaults to `breaks`. */
+  priority: z.number().finite(),
+});
+
+/**
+ * Threat-intel catalog metadata pinned at scan time — the engine snapshots the
+ * CISA KEV (and optionally EPSS) catalogs at run start so two runs against the
+ * same cluster always score the same findings the same way.
+ */
+export const WireThreatIntelSchema = z.object({
+  /** 'live:cisa-kev' | 'cache' | 'override' | 'override-only'. */
+  source: ShortStr(64),
+  /** Catalog version (CISA publishes a dated catalog daily). */
+  version: ShortStr(64),
+  /** KEV catalog entry count. */
+  kevCount: z.number().int().nonnegative(),
+  /** EPSS catalog entry count (0 / omitted when EPSS fetch was skipped). */
+  epssCount: z.number().int().nonnegative().optional(),
+});
+
 export const WireRemediationSchema = z.object({
   id: ShortStr(),
   playbookId: ShortStr(),
@@ -164,6 +213,16 @@ export const PostureSnapshotSchema = z.object({
   paths: z.array(WireAttackPathSchema).max(2000),
   remediations: z.array(WireRemediationSchema).max(2000),
   audit: z.array(WireAuditEntrySchema).max(20000),
+  // --- v3 attack-graph additions (optional; legacy agents omit) -------------
+  /** Catalog the engine pinned at scan time. Drives the dashboard intel banner. */
+  intel: WireThreatIntelSchema.optional(),
+  /**
+   * Choke-point controls ranked by `breaks`. The hosted side renders these in
+   * their own "Apply first" panel; they may overlap with `remediations` (the
+   * v3 mapper emits both for back-compat) but the typed shape is the source of
+   * truth for the v3-aware UI.
+   */
+  chokePoints: z.array(WireChokePointSchema).max(256).optional(),
 });
 
 /** Live scan progress (display-only). Unknown keys are stripped at the boundary. */
@@ -289,6 +348,12 @@ export type WireFinding = z.infer<typeof WireFindingSchema>;
 export type WireAttackStep = z.infer<typeof WireAttackStepSchema>;
 export type WireAttackPath = z.infer<typeof WireAttackPathSchema>;
 export type WireRemediation = z.infer<typeof WireRemediationSchema>;
+export type ChokeControl = z.infer<typeof ChokeControlSchema>;
+export type WireChokePoint = z.infer<typeof WireChokePointSchema>;
+export type WireThreatIntel = z.infer<typeof WireThreatIntelSchema>;
+export type SsvcDecision = z.infer<typeof SsvcDecisionSchema>;
+export type Confidence = z.infer<typeof ConfidenceSchema>;
+export type Exposure = z.infer<typeof ExposureSchema>;
 export type WireAuditEntry = z.infer<typeof WireAuditEntrySchema>;
 export type WireRun = z.infer<typeof WireRunSchema>;
 export type PostureSnapshot = z.infer<typeof PostureSnapshotSchema>;
