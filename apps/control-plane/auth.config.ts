@@ -95,6 +95,11 @@ export const authConfig = {
         pathname.startsWith('/api/auth') ||
         pathname.startsWith('/api/agent') ||
         pathname.startsWith('/api/scans') ||
+        // `/api/clusters/self` — CLI Bearer-token self-resolution (cannot
+        // be a `_self` folder because Next.js App Router treats `_`-prefixed
+        // folders as private/unrouted). Matched exactly so other future
+        // `/api/clusters/<id>` shapes stay session-auth'd.
+        pathname === '/api/clusters/self' ||
         /^\/api\/clusters\/[^/]+\/events\/?$/.test(pathname) ||
         pathname.startsWith('/mfa')
       ) {

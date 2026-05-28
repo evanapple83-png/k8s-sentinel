@@ -113,7 +113,7 @@ class BootstrapOptions:
     # The cluster_id is required for the scan POST. Resolution strategy
     # (in order):
     #   1. ARGUS_CLUSTER_ID env var (escape hatch).
-    #   2. GET /api/clusters/_self with the enroll token (preferred).
+    #   2. GET /api/clusters/self with the enroll token (preferred).
     # See events_client.resolve_cluster_id for the rationale; the choice
     # is surfaced in the final report.
     cluster_id_override: Optional[str] = None
@@ -764,7 +764,7 @@ def _resolve_cluster_id(opts: BootstrapOptions) -> str:
     """Resolution order:
       1. opts.cluster_id_override (set by --cluster-id CLI flag or env)
       2. ARGUS_CLUSTER_ID env var
-      3. GET /api/clusters/_self  (preferred — server-side token → cluster lookup)
+      3. GET /api/clusters/self  (preferred — server-side token → cluster lookup)
     """
     if opts.cluster_id_override:
         return opts.cluster_id_override

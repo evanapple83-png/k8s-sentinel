@@ -84,14 +84,14 @@ def resolve_cluster_id(control_plane: str, token: str) -> str:
     The contract leaves clusterId acquisition ambiguous: ``POST /api/clusters``
     returns ``{ id, enrollmentToken }`` to the *web user*, but the CLI only
     ever sees the raw enrollment token. We use a GET to
-    ``/api/clusters/_self`` with the Bearer token; the control-plane resolves
+    ``/api/clusters/self`` with the Bearer token; the control-plane resolves
     the token → enrollment row → cluster_id.
 
     If the control-plane hasn't implemented ``_self`` yet, callers should set
     ``ARGUS_CLUSTER_ID`` env var as an escape hatch (handled in
     bootstrap.py). This function only handles the network path.
     """
-    url = _join(control_plane, "/api/clusters/_self")
+    url = _join(control_plane, "/api/clusters/self")
     req = urllib.request.Request(url, method="GET")
     req.add_header("Authorization", f"Bearer {token}")
     req.add_header("Accept", "application/json")
@@ -102,15 +102,15 @@ def resolve_cluster_id(control_plane: str, token: str) -> str:
             cid = body.get("id") or body.get("clusterId")
             if not cid:
                 raise EventsClientError(
-                    f"/api/clusters/_self response missing 'id': {body!r}"
+                    f"/api/clusters/self response missing 'id': {body!r}"
                 )
             return str(cid)
     except urllib.error.HTTPError as e:
         raise EventsClientError(
-            f"/api/clusters/_self returned {e.code}: {e.read()[:200]!r}"
+            f"/api/clusters/self returned {e.code}: {e.read()[:200]!r}"
         ) from e
     except urllib.error.URLError as e:
-        raise EventsClientError(f"/api/clusters/_self failed: {e}") from e
+        raise EventsClientError(f"/api/clusters/self failed: {e}") from e
 
 
 # ---------------------------------------------------------------------------

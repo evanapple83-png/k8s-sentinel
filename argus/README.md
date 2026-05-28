@@ -320,7 +320,7 @@ python3 -m argus.cli bootstrap csr \
 | `--out PATH` | Scoped agent kubeconfig path (default `./argus-agent.kubeconfig`) |
 | `--admin-kubeconfig PATH` | Admin kubeconfig (default `$KUBECONFIG`/`~/.kube/config`) |
 | `--admin-context NAME` | Kube context inside the admin kubeconfig |
-| `--cluster-id ID` | Control-plane cluster id (default: resolve via `/api/clusters/_self`) |
+| `--cluster-id ID` | Control-plane cluster id (default: resolve via `/api/clusters/self`) |
 | `--quiet` / `--verbose` | Log levels |
 
 ### Tests

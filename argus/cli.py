@@ -148,7 +148,7 @@ def build_parser() -> argparse.ArgumentParser:
     csr.add_argument("--admin-context", default=None,
                      help="kube context inside the admin kubeconfig (default: current-context)")
     csr.add_argument("--cluster-id", default=None,
-                     help="control-plane cluster id (default: resolved via /api/clusters/_self)")
+                     help="control-plane cluster id (default: resolved via /api/clusters/self)")
     csr.add_argument("--quiet", action="store_true", help="suppress info logging")
     csr.add_argument("--verbose", action="store_true", help="emit debug logging")
 
