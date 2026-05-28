@@ -17,6 +17,13 @@ import type { TunnelHandlers } from './client.js';
  * posture; approve writes a reviewable PR bundle to disk and applies nothing
  * to the cluster.
  */
+/** Truthy env flag — accepts `"1"`, `"true"`, `"yes"`, `"on"` (case-insensitive). */
+function envFlag(name: string): boolean {
+  const v = process.env[name];
+  if (!v) return false;
+  return ['1', 'true', 'yes', 'on'].includes(v.toLowerCase());
+}
+
 export function buildTunnelHandlers(config: SentinelConfig): TunnelHandlers {
   const scanner = (process.env.SENTINEL_SCANNER ?? 'argus').toLowerCase();
   return {
@@ -41,16 +48,22 @@ export function buildTunnelHandlers(config: SentinelConfig): TunnelHandlers {
         });
       }
 
-      // Default path — v3 ARGUS engine via Python subprocess.
+      // Default path — v3 ARGUS engine via Python subprocess. Command params
+      // win when explicitly set; otherwise we honour the chart-supplied env
+      // (ARGUS_NO_NETWORK / ARGUS_IMAGES_ONLY / ARGUS_ACCEPTED_RISKS_DIR) so
+      // operators can pin behaviour without re-issuing every scan from the UI.
       emit({ type: 'progress', message: 'argus: collecting inventory + running scanners' });
       const snapshot = await runArgusScan({
         clusterName: typeof params.clusterName === 'string' ? params.clusterName : config.clusterName,
         inCluster: params.inCluster !== false,
         kubeconfig: typeof params.kubeconfig === 'string' ? params.kubeconfig : config.kubeconfig,
         context: typeof params.context === 'string' ? params.context : undefined,
-        acceptedRisksDir: typeof params.acceptedRisksDir === 'string' ? params.acceptedRisksDir : process.env.ARGUS_ACCEPTED_RISKS_DIR,
-        noNetwork: params.noNetwork === true,
-        imagesOnly: params.imagesOnly === true,
+        acceptedRisksDir:
+          typeof params.acceptedRisksDir === 'string'
+            ? params.acceptedRisksDir
+            : process.env.ARGUS_ACCEPTED_RISKS_DIR,
+        noNetwork: params.noNetwork === true || envFlag('ARGUS_NO_NETWORK'),
+        imagesOnly: params.imagesOnly === true || envFlag('ARGUS_IMAGES_ONLY'),
         log: (_level, msg, meta) => emit({ type: 'progress', message: meta ? `${msg} ${JSON.stringify(meta)}` : msg }),
       });
       emit({

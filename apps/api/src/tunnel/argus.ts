@@ -13,18 +13,17 @@
  * (oversize string, wrong enum, missing field) fails IN-CLUSTER, never at the
  * relay.
  *
- * v3 fields the existing wire schema doesn't yet carry (KEV, ransomware, EPSS,
- * SSVC decision, choke-point analysis, live threat-intel catalog version) are
- * smuggled into the closest existing fields where possible:
- *   - SSVC decision  →  WireFinding.severity (Act→critical, Attend→high,
- *                       Track→medium, Track*→low; preserves the colour the UI
- *                       already understands)
- *   - choke-points   →  WireRemediation[]   (kind: 'manual'; ARGUS doesn't
- *                       produce diffs — those are PR-bundles)
- *   - intel banner   →  WireRun.summary     ("CISA KEV v… · N known-exploited")
- *
- * Fase 3 widens the wire schema with first-class fields for the above; the
- * mapping below collapses to a strict 1:1 then.
+ * Wire mapping (Fase 3 — typed v3 fields land first-class):
+ *   - KEV / ransomware / EPSS / CVE / SSVC / exposure / confidence / reaches
+ *     → typed WireFinding fields (no more description-smuggling).
+ *   - SSVC decision still drives WireFinding.severity so the legacy UI keeps
+ *     its colour; the typed `ssvc` field lets the v3-aware dashboard render
+ *     "Act / Attend / Track" badges directly.
+ *   - choke-points  → typed `snapshot.chokePoints` (the v3 panel). Same
+ *     entries ALSO go into `remediations` so the existing Fixes screen still
+ *     works without a schema migration to the legacy UI.
+ *   - threat-intel  → typed `snapshot.intel` (banner). The run.summary still
+ *     carries a human-readable one-liner for non-v3 viewers.
  */
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
@@ -38,10 +37,15 @@ import {
   type PostureSnapshot,
   type WireAttackPath,
   type WireAttackStep,
+  type WireChokePoint,
   type WireFinding,
   type WireRemediation,
   type WireRun,
+  type WireThreatIntel,
   type Severity,
+  type SsvcDecision,
+  type Confidence,
+  type Exposure,
 } from '@k8s-sentinel/relay-protocol';
 
 // --- Public API -------------------------------------------------------------
@@ -127,10 +131,15 @@ export function mapToPostureSnapshot(report: ArgusReportJson): PostureSnapshot {
 
   const findings = (report.findings ?? []).map((f) => mapFinding(f, rawById, workloadById));
   const paths = mapPaths(report.paths ?? {}, workloadById);
-  const remediations = mapChokePoints(report.chokePoints ?? [], report.reachableJewels ?? []);
+  const chokePoints = mapChokePointsTyped(report.chokePoints ?? [], report.reachableJewels ?? []);
+  const remediations = mapChokePointsToRemediations(chokePoints);
   const run = buildRunRecord(report);
+  const intel = mapIntel(report.intel);
 
-  return { run, findings, paths, remediations, audit: [] };
+  const snap: PostureSnapshot = { run, findings, paths, remediations, audit: [] };
+  if (intel) snap.intel = intel;
+  if (chokePoints.length) snap.chokePoints = chokePoints;
+  return snap;
 }
 
 // --- Spawn + run-to-completion ---------------------------------------------
@@ -252,11 +261,13 @@ function mapFinding(
   const raw = rawById.get(f.id);
   const wl = workloadById.get(f.target);
   const [namespace, name] = splitTarget(f.target);
-  return {
+  const wf: WireFinding = {
     id: cap(f.id, 256) || 'unknown',
     source: cap(raw?.source ?? 'argus', 256),
     ruleId: cap(f.cve ?? raw?.ruleId ?? raw?.cve ?? 'argus', 256),
     title: cap(f.title ?? raw?.title ?? f.cve ?? 'finding', 4096),
+    // SSVC drives wire severity (so legacy UI keeps its colour); the typed
+    // `ssvc` field below lets the v3-aware UI render the raw decision.
     severity: SSVC_TO_SEVERITY[f.decision] ?? mapRawSeverity(raw?.severity) ?? 'medium',
     resource: {
       kind: cap(wl?.kind ?? (f.target === 'cluster' ? 'Cluster' : 'Workload'), 256),
@@ -267,12 +278,46 @@ function mapFinding(
     reachable: f.confidence !== 'n/a',
     exploitScore: numberOrUndefined(f.score),
     baseScore: numberOrUndefined(f.cvss),
-    // v3 emits descriptive control intel (KEV/ransomware/EPSS/SSVC) per
-    // finding — Fase 3 will add a typed field. For now we stash it into the
-    // generic `description` so it's reachable hosted-side without a schema
-    // change.
-    description: cap(describeFindingMetadata(f, raw), 16384),
+    // Keep the scanner's own description text in `description` when it
+    // differs from the title; the v3 metadata used to be smuggled here but
+    // now lives in typed fields below.
+    description:
+      raw?.title && raw.title !== f.title ? cap(raw.title, 16384) : undefined,
+    // --- typed v3 fields ----------------------------------------------------
+    cve: f.cve ? cap(f.cve, 64) : undefined,
+    kev: typeof f.kev === 'boolean' ? f.kev : undefined,
+    ransomware: typeof f.ransomware === 'boolean' ? f.ransomware : undefined,
+    epss: typeof f.epss === 'number' && Number.isFinite(f.epss) ? clamp01(f.epss) : undefined,
+    ssvc: isSsvc(f.decision) ? (f.decision as SsvcDecision) : undefined,
+    confidence: isConfidence(f.confidence) ? (f.confidence as Confidence) : undefined,
+    exposure: isExposure(f.exposure) ? (f.exposure as Exposure) : undefined,
+    reaches: Array.isArray(f.reaches) && f.reaches.length ? f.reaches.slice(0, 32).map((r) => cap(r, 64)) : undefined,
   };
+  // Strip undefined keys so the wire frame stays small. (Zod tolerates them
+  // but JSON.stringify writes `null` for explicit undefined in objects? no —
+  // strips them. This block is for clarity, not correctness.)
+  for (const k of Object.keys(wf) as (keyof WireFinding)[]) {
+    if (wf[k] === undefined) delete (wf as Record<string, unknown>)[k];
+  }
+  return wf;
+}
+
+function clamp01(n: number): number {
+  if (n < 0) return 0;
+  if (n > 1) return 1;
+  return n;
+}
+
+function isSsvc(v: unknown): v is SsvcDecision {
+  return v === 'Act' || v === 'Attend' || v === 'Track' || v === 'Track*';
+}
+
+function isConfidence(v: unknown): v is Confidence {
+  return v === 'high' || v === 'medium' || v === 'n/a';
+}
+
+function isExposure(v: unknown): v is Exposure {
+  return v === 'open' || v === 'internal' || v === 'small' || v === 'cluster';
 }
 
 function mapRawSeverity(raw: string | undefined): Severity | undefined {
@@ -282,20 +327,6 @@ function mapRawSeverity(raw: string | undefined): Severity | undefined {
     return norm as Severity;
   }
   return undefined;
-}
-
-function describeFindingMetadata(f: ArgusScoredFinding, raw: ArgusActiveFinding | undefined): string {
-  const parts: string[] = [];
-  if (f.cve) parts.push(`CVE: ${f.cve}`);
-  if (f.kev) parts.push('KEV: yes');
-  if (f.ransomware) parts.push('Ransomware: yes');
-  if (typeof f.epss === 'number') parts.push(`EPSS: ${f.epss.toFixed(2)}`);
-  if (f.decision) parts.push(`SSVC: ${f.decision}`);
-  if (f.exposure) parts.push(`Exposure: ${f.exposure}`);
-  if (f.confidence) parts.push(`Confidence: ${f.confidence}`);
-  if (Array.isArray(f.reaches) && f.reaches.length) parts.push(`Reaches: ${f.reaches.join(',')}`);
-  if (raw?.title && raw.title !== f.title) parts.push(`Scanner title: ${raw.title}`);
-  return parts.join(' · ');
 }
 
 function mapPaths(
@@ -352,43 +383,85 @@ function narrativeFor(jewel: string, steps: WireAttackStep[]): string {
   return `Internet → ${chain} → ${target}`;
 }
 
-function mapChokePoints(
+/** Map ARGUS choke-points to the typed wire shape (the v3 source of truth). */
+function mapChokePointsTyped(
   chokes: ArgusChokePoint[],
   reachableJewels: string[],
-): WireRemediation[] {
+): WireChokePoint[] {
+  const total = reachableJewels.length || 0;
   return chokes.map((ch, i) => {
     const ctrl = ch.control ?? {};
-    const total = reachableJewels.length || 1;
     return {
       id: `cp-${i + 1}`,
-      playbookId: cap(ctrl.type ?? 'unknown', 256),
-      title: cap(describeControl(ctrl), 4096),
-      severity: severityForBreaks(ch.breaks, total),
-      kind: 'manual',
-      rationale: cap(
-        `Eliminates ${ch.breaks} of ${total} active attack paths` +
-          (ch.targets?.length ? ` to ${ch.targets.map(prettyNode).join(', ')}` : ''),
-        16384,
-      ),
-      path: '',
-      diff: '',
-      manualSteps: [cap(describeControl(ctrl), 4096)],
-      controls: [],
-      findingIds: [],
-      // ARGUS chokepoints aren't tied to a single attack-path id; omit.
-      attackPathId: undefined,
-      // Higher breaks → higher priority. Wire priority is just a number;
-      // hosted side sorts on it.
-      priority: ch.breaks,
-      branch: '',
-      prTitle: cap(describeControl(ctrl), 4096),
-      prBody: cap(
-        `Choke-point fix surfaced by ARGUS v3. Apply this and ${ch.breaks} of ` +
-          `${total} active attack paths collapse.`,
-        16384,
-      ),
+      control: {
+        type: cap(ctrl.type ?? 'unknown', 64),
+        ref: ctrl.ref ? cap(ctrl.ref, 128) : undefined,
+        workload: ctrl.workload ? cap(ctrl.workload, 256) : undefined,
+        sa: ctrl.sa ? cap(ctrl.sa, 256) : undefined,
+        what: ctrl.what ? cap(ctrl.what, 128) : undefined,
+        role: ctrl.role ? cap(ctrl.role, 256) : undefined,
+      },
+      breaks: Math.max(0, Math.trunc(ch.breaks ?? 0)),
+      totalPaths: total,
+      targets: Array.isArray(ch.targets) ? ch.targets.slice(0, 64).map((t) => cap(t, 256)) : [],
+      severity: severityForBreaks(ch.breaks ?? 0, total || 1),
+      description: cap(describeControl(ctrl), 4096),
+      priority: ch.breaks ?? 0,
     };
   });
+}
+
+/**
+ * Mirror the typed choke-points as legacy WireRemediation entries so the old
+ * "Fixes" screen keeps rendering them while the v3 dashboard panel ramps up.
+ * Once the dashboard reads `snapshot.chokePoints` exclusively this can be
+ * dropped (and the wire frame shrinks).
+ */
+function mapChokePointsToRemediations(chokes: WireChokePoint[]): WireRemediation[] {
+  return chokes.map((ch) => ({
+    id: ch.id,
+    playbookId: cap(ch.control.type, 256),
+    title: cap(ch.description, 4096),
+    severity: ch.severity,
+    kind: 'manual',
+    rationale: cap(
+      `Eliminates ${ch.breaks} of ${ch.totalPaths || 1} active attack paths` +
+        (ch.targets.length ? ` to ${ch.targets.map(prettyNode).join(', ')}` : ''),
+      16384,
+    ),
+    path: '',
+    diff: '',
+    manualSteps: [ch.description],
+    controls: [],
+    findingIds: [],
+    attackPathId: undefined,
+    priority: ch.priority,
+    branch: '',
+    prTitle: cap(ch.description, 4096),
+    prBody: cap(
+      `Choke-point fix surfaced by ARGUS v3. Apply this and ${ch.breaks} of ` +
+        `${ch.totalPaths || 1} active attack paths collapse.`,
+      16384,
+    ),
+  }));
+}
+
+function mapIntel(intel: ArgusReportJson['intel']): WireThreatIntel | undefined {
+  if (!intel) return undefined;
+  const version = typeof intel.version === 'string' ? intel.version : '';
+  const source = typeof intel.source === 'string' ? intel.source : '';
+  // The catalog is essentially mandatory in v3; if neither field landed treat
+  // it as "no intel" and omit from the snapshot rather than emit junk.
+  if (!version && !source) return undefined;
+  const out: WireThreatIntel = {
+    source: cap(source || 'unknown', 64),
+    version: cap(version || '?', 64),
+    kevCount: Math.max(0, Math.trunc(intel.kev_count ?? 0)),
+  };
+  if (typeof intel.epss_count === 'number' && Number.isFinite(intel.epss_count)) {
+    out.epssCount = Math.max(0, Math.trunc(intel.epss_count));
+  }
+  return out;
 }
 
 function severityForBreaks(breaks: number, total: number): Severity {
@@ -401,10 +474,21 @@ function severityForBreaks(breaks: number, total: number): Severity {
 function buildRunRecord(report: ArgusReportJson): WireRun {
   const intel = report.intel ?? { kev_count: 0, version: '?', source: 'override-only' };
   const startedAt = (report.scannedAt as string | undefined) ?? new Date().toISOString();
+  const waived = Array.isArray(report.acceptedRisks) ? report.acceptedRisks.length : 0;
+  const refused = Array.isArray(report.refusals) ? report.refusals.length : 0;
+  const reopened = Array.isArray(report.autoReopened) ? report.autoReopened.length : 0;
+  // Surface accepted-risk activity in the summary so every dashboard header
+  // shows "N waived · M auto-reopened" without a schema migration. Fase 6
+  // proper will lift this into typed snapshot.waivers + a dedicated UI panel.
+  const waiverSuffix =
+    waived || refused || reopened
+      ? ` · ${waived} waived, ${refused} refused, ${reopened} auto-reopened`
+      : '';
   const summary =
     `ARGUS v3 · CISA KEV ${intel.source ?? 'override'} (${intel.version ?? '?'}) · ` +
     `${intel.kev_count ?? 0} known-exploited · ` +
-    `${report.reachableJewels?.length ?? 0} crown-jewel target(s) reachable`;
+    `${report.reachableJewels?.length ?? 0} crown-jewel target(s) reachable` +
+    waiverSuffix;
   return {
     id: `argus-${Date.parse(startedAt) || Date.now()}`,
     status: 'complete',
@@ -535,7 +619,7 @@ export interface ArgusReportJson {
   cluster?: string;
   scannedAt?: string;
   riskScore?: number;
-  intel?: { kev_count?: number; version?: string; source?: string };
+  intel?: { kev_count?: number; epss_count?: number; version?: string; source?: string };
   reachableJewels?: string[];
   paths?: Record<string, ArgusPathStep[] | null>;
   chokePoints?: ArgusChokePoint[];

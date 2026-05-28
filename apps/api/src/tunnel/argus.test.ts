@@ -180,12 +180,34 @@ describe('mapToPostureSnapshot', () => {
     expect(f?.ruleId).toBe('CVE-2026-31337');
   });
 
-  it('smuggles v3 intel into the description field until the wire widens', () => {
+  it('emits v3 intel as TYPED finding fields (no description-smuggling)', () => {
     const snap = mapToPostureSnapshot(fixtureReport());
     const f = snap.findings.find((x) => x.id === 'trivy-001');
-    expect(f?.description).toContain('KEV: yes');
-    expect(f?.description).toContain('Ransomware: yes');
-    expect(f?.description).toContain('SSVC: Act');
+    expect(f?.cve).toBe('CVE-2026-31337');
+    expect(f?.kev).toBe(true);
+    expect(f?.ransomware).toBe(true);
+    expect(f?.epss).toBeCloseTo(0.92, 5);
+    expect(f?.ssvc).toBe('Act');
+    expect(f?.confidence).toBe('high');
+    expect(f?.exposure).toBe('open');
+    expect(f?.reaches).toEqual(['secret']);
+    // description carries the scanner's own text only if it differs from
+    // the engine title; in this fixture they match so it's omitted.
+    expect(f?.description).toBeUndefined();
+    // Old smuggle markers must NOT leak into the typed channel.
+    expect(JSON.stringify(f)).not.toContain('KEV: yes');
+    expect(JSON.stringify(f)).not.toContain('SSVC: Act'); // typed: ssvc='Act' is fine
+  });
+
+  it('still maps Track* findings with confidence n/a → reachable false', () => {
+    const snap = mapToPostureSnapshot(fixtureReport());
+    const f = snap.findings.find((x) => x.id === 'trivy-002');
+    expect(f?.ssvc).toBe('Track*');
+    expect(f?.confidence).toBe('n/a');
+    expect(f?.reachable).toBe(false);
+    expect(f?.exposure).toBe('small');
+    // reaches[] = [] in the fixture; absent rather than [] on the wire.
+    expect(f?.reaches).toBeUndefined();
   });
 
   it('emits one WireAttackPath per reachable crown jewel with steps in order', () => {
@@ -204,15 +226,67 @@ describe('mapToPostureSnapshot', () => {
     expect(clusterPath?.steps[0]?.detail).toMatch(/\(inferred\)/);
   });
 
-  it('maps choke-points to manual remediations, top breaks → critical', () => {
+  it('maps choke-points to TYPED snapshot.chokePoints (v3 source of truth)', () => {
+    const snap = mapToPostureSnapshot(fixtureReport());
+    expect(snap.chokePoints).toHaveLength(2);
+    const top = snap.chokePoints![0]!;
+    expect(top.control.type).toBe('patch');
+    expect(top.control.ref).toBe('CVE-2026-31337');
+    expect(top.breaks).toBe(4);
+    expect(top.totalPaths).toBe(4); // = reachableJewels.length in the fixture
+    expect(top.severity).toBe('critical');
+    expect(top.description).toMatch(/Patch CVE-2026-31337/);
+    expect(top.targets).toContain('CLUSTER-ADMIN');
+    expect(top.priority).toBe(4);
+  });
+
+  it('mirrors choke-points into legacy remediations for back-compat with the Fixes screen', () => {
     const snap = mapToPostureSnapshot(fixtureReport());
     expect(snap.remediations).toHaveLength(2);
     const top = snap.remediations[0]!;
     expect(top.kind).toBe('manual');
-    expect(top.severity).toBe('critical'); //  breaks=4, total=4 → all paths
+    expect(top.severity).toBe('critical');
     expect(top.title).toMatch(/Patch CVE-2026-31337/);
     expect(top.rationale).toMatch(/Eliminates 4 of 4/);
     expect(top.priority).toBe(4);
+  });
+
+  it('appends accepted-risk activity to run.summary so the UI shows waiver counts', () => {
+    const r = fixtureReport();
+    r.acceptedRisks = [{ id: 'AR-001' }, { id: 'AR-002' }];
+    r.refusals = [{ id: 'AR-003', reason: 'no compensating control' }];
+    r.autoReopened = [{ id: 'AR-004', reason: 'control failed again' }];
+    const snap = mapToPostureSnapshot(r);
+    expect(snap.run.summary).toMatch(/2 waived/);
+    expect(snap.run.summary).toMatch(/1 refused/);
+    expect(snap.run.summary).toMatch(/1 auto-reopened/);
+  });
+
+  it('omits the waiver suffix when no accepted-risks landed', () => {
+    const snap = mapToPostureSnapshot(fixtureReport());
+    expect(snap.run.summary).not.toMatch(/waived/);
+  });
+
+  it('emits typed snapshot.intel with the live KEV catalog stats', () => {
+    const snap = mapToPostureSnapshot(fixtureReport());
+    expect(snap.intel).toEqual({
+      source: 'live:cisa-kev',
+      version: '2026.05.27',
+      kevCount: 1607,
+    });
+  });
+
+  it('omits snapshot.intel + chokePoints when the report doesn’t carry them', () => {
+    const r = fixtureReport();
+    delete r.intel;
+    r.chokePoints = [];
+    r.reachableJewels = [];
+    r.paths = {};
+    const snap = mapToPostureSnapshot(r);
+    expect(snap.intel).toBeUndefined();
+    expect(snap.chokePoints).toBeUndefined();
+    // Still passes the wire schema (both fields are optional).
+    expect(() => PostureSnapshotSchema.parse(snap)).not.toThrow();
   });
 
   it('builds a WireRun summary carrying the live KEV catalog stats', () => {
