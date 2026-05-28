@@ -179,7 +179,18 @@ export function IntelBanner({ intel }: { intel: ThreatIntel | null | undefined }
  * has to surface it before any per-finding triage so operators don't drown in
  * the 100s of underlying findings.
  */
-export function ChokePointsPanel({ chokePoints }: { chokePoints: ChokePoint[] }) {
+export function ChokePointsPanel({
+  chokePoints,
+  aiSlot,
+}: {
+  chokePoints: ChokePoint[];
+  /**
+   * Optional render-prop slotted under each choke-point. Used by the Overview
+   * page to mount the "Why this fix?" AI expander as a client island while
+   * keeping the panel itself server-rendered.
+   */
+  aiSlot?: (cp: ChokePoint, index: number) => ReactNode;
+}) {
   if (!chokePoints.length) return null;
   return (
     <Card>
@@ -193,35 +204,35 @@ export function ChokePointsPanel({ chokePoints }: { chokePoints: ChokePoint[] })
         </div>
         <ol className="space-y-2">
           {chokePoints.map((cp, i) => (
-            <li
-              key={cp.id}
-              className="flex items-start gap-3 rounded-lg border bg-card p-3"
-            >
-              <span
-                className="mt-0.5 inline-flex h-7 w-12 shrink-0 items-center justify-center rounded-md text-xs font-bold tabular-nums text-white"
-                style={{
-                  background:
-                    cp.severity === 'critical'
-                      ? 'var(--critical)'
-                      : cp.severity === 'high'
+            <li key={cp.id} className="rounded-lg border bg-card p-3">
+              <div className="flex items-start gap-3">
+                <span
+                  className="mt-0.5 inline-flex h-7 w-12 shrink-0 items-center justify-center rounded-md text-xs font-bold tabular-nums text-white"
+                  style={{
+                    background:
+                      cp.severity === 'critical'
                         ? 'var(--critical)'
-                        : 'var(--warn)',
-                }}
-                title={`${cp.breaks} of ${cp.totalPaths || '?'} active attack paths`}
-              >
-                ×{cp.breaks}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="text-sm font-medium leading-snug">
-                  {i + 1}. {cp.description}
-                </div>
-                {cp.targets.length ? (
-                  <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                    eliminates → {cp.targets.slice(0, 4).join(' · ')}
-                    {cp.targets.length > 4 ? ` +${cp.targets.length - 4} more` : ''}
+                        : cp.severity === 'high'
+                          ? 'var(--critical)'
+                          : 'var(--warn)',
+                  }}
+                  title={`${cp.breaks} of ${cp.totalPaths || '?'} active attack paths`}
+                >
+                  ×{cp.breaks}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium leading-snug">
+                    {i + 1}. {cp.description}
                   </div>
-                ) : null}
+                  {cp.targets.length ? (
+                    <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+                      eliminates → {cp.targets.slice(0, 4).join(' · ')}
+                      {cp.targets.length > 4 ? ` +${cp.targets.length - 4} more` : ''}
+                    </div>
+                  ) : null}
+                </div>
               </div>
+              {aiSlot ? aiSlot(cp, i) : null}
             </li>
           ))}
         </ol>

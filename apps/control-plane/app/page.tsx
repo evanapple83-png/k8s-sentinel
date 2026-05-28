@@ -5,9 +5,11 @@ import { Button } from '@/components/ui/button';
 import { RiskRing, rating } from '@/components/risk-ring';
 import { Stat, Bar, IntelBanner, ChokePointsPanel } from '@/components/bits';
 import { EmptyState } from '@/components/placeholder';
+import { FEATURE_AI_NARRATION } from '@/lib/flags';
 import type { Severity } from '@/lib/types';
 import { getActiveData, type SearchParamsInput } from '@/lib/active';
 import { DEMO_PREV_RUN } from '@/lib/mock';
+import { WhyThisFix } from './why-this-fix';
 
 const SEV_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 const SEV_TONE: Record<Severity, string> = {
@@ -67,6 +69,14 @@ export default async function OverviewPage({
   const kevCount = findings.filter((f) => f.kev === true).length;
   const actCount = findings.filter((f) => f.ssvc === 'Act').length;
   const chokePoints = data.snapshot.chokePoints ?? [];
+  const ai =
+    FEATURE_AI_NARRATION && !data.demo && data.activeAccountId && data.activeClusterId
+      ? {
+          accountId: data.activeAccountId,
+          clusterId: data.activeClusterId,
+          runId: run.id,
+        }
+      : null;
 
   // Delta vs. the previous run: from the demo prev-run, or the next run in the
   // (newest-first) live list.
@@ -144,7 +154,14 @@ export default async function OverviewPage({
         </div>
       </div>
 
-      <ChokePointsPanel chokePoints={chokePoints} />
+      <ChokePointsPanel
+        chokePoints={chokePoints}
+        aiSlot={
+          ai
+            ? (_cp, idx) => <WhyThisFix chokePointIndex={idx} ai={ai} />
+            : undefined
+        }
+      />
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Card>
