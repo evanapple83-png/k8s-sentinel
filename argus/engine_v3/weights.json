@@ -1,0 +1,6 @@
+{
+  "exposure": {"open": 1.0, "internal": 0.5, "small": 0.1},
+  "impact":   {"base": 0.3, "secret": 0.3, "cloud_data": 0.3, "cluster_admin": 0.6, "cloud_admin": 0.6},
+  "ssvc":     {"epss_likely": 0.30},
+  "cvss_fallback_factor": 0.6
+}

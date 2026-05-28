@@ -1,0 +1,6 @@
+{"findings":[
+  {"id":"F-001","source":"trivy","type":"cve","cve":"CVE-2026-31337","cvss":9.8,"severity":"critical","target":"payments/invoice-api","title":"RCE in libfoo < 2.1"},
+  {"id":"F-002","source":"trivy","type":"cve","cve":"CVE-2026-31337","cvss":9.8,"severity":"critical","target":"batch/report-worker","title":"RCE in libfoo < 2.1"},
+  {"id":"F-006","source":"trivy","type":"cve","cve":"CVE-2025-22000","cvss":5.3,"severity":"medium","target":"payments/cache","title":"DoS in redis < 7.2.4"},
+  {"id":"F-009","source":"trivy","type":"cve","cve":"CVE-2026-40002","cvss":8.1,"severity":"high","target":"ci/runner","title":"Deserialization RCE in ci-runner base image"}
+]}
