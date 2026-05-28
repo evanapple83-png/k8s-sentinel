@@ -250,6 +250,93 @@ What it proves (DoD §6):
 * The smoke script uses `set -euo pipefail`, asserts every prerequisite, and
   authenticates as the `argus` SA (never `cluster-admin`).
 
+## Phase 6 — `argus bootstrap csr` (out-of-cluster public-key connect)
+
+Adds a second cluster-connect method alongside Helm. The cluster signs a
+short-lived client cert that it explicitly approves; the agent then runs
+read-only as that cert identity. Spec: `docs/PUBKEY_CONNECT_SPEC.md`;
+wire contract: `docs/PUBKEY_CONNECT_CONTRACT.md`.
+
+```bash
+# kind / dev: auto-approve + clean up at exit
+python3 -m argus.cli bootstrap csr \
+    --enroll ent_<token-from-the-UI> \
+    --control-plane https://control-plane.example.com \
+    --auto-approve --cleanup
+
+# production: print the kubectl approve command and wait for an admin
+python3 -m argus.cli bootstrap csr \
+    --enroll ent_<token-from-the-UI> \
+    --control-plane https://control-plane.example.com
+```
+
+### What it does
+
+1. Generates a fresh EC P-256 (or RSA-2048 fallback) keypair locally in a
+   `0600` temp file with `atexit` cleanup. The private key **never leaves
+   your machine** and is never logged or POSTed.
+2. Builds a CSR with `CN=argus-agent-<6-hex>`, `O=argus-readonly`,
+   `signerName=kubernetes.io/kube-apiserver-client`.
+3. Submits the CSR to the cluster.
+4. Either (default) prints `kubectl certificate approve <name>` and polls
+   until approved+issued, or (with `--auto-approve`) patches the approval
+   subresource itself.
+5. Applies the same read-only RBAC the Helm chart uses (reuses the existing
+   `argus-readonly` ClusterRole if present, otherwise creates it) and binds
+   it via a new ClusterRoleBinding to **both** the cert's `User=CN` and
+   `Group=O` subjects.
+6. Assembles a scoped agent kubeconfig at `--out` (default
+   `./argus-agent.kubeconfig`, mode `0600`).
+7. Runs `argus scan` against that kubeconfig.
+8. POSTs the resulting report to `<control-plane>/api/scans` with the
+   enrollment token as a Bearer credential.
+9. Optionally (`--cleanup`) deletes the CSR + ClusterRoleBinding on exit.
+
+### Security — read this
+
+* **Kubernetes client certificates are NOT revocable.** The only mitigation
+  is a short TTL — `--ttl` defaults to `3600s` and the CLI prints the
+  cert's `NotAfter` timestamp on exit. Use `--cleanup` for ephemeral
+  scans.
+* Approving the CSR and creating the ClusterRoleBinding requires
+  `cluster-admin` on the kubeconfig you point `--admin-kubeconfig` at.
+  This is intentional — the cluster explicitly "admits" the agent. The
+  bound RBAC is the **same** read-only set the Helm chart grants
+  (`get/list/watch`, NO `secrets` verbs anywhere).
+* `--auto-approve` defaults **OFF** and is documented as kind/dev only.
+* The control-plane only ever sees the CSR and the enrollment token; it
+  never receives the private key, the issued cert, or any cluster
+  credential.
+
+### Flags
+
+| Flag | Effect |
+|---|---|
+| `--enroll TOKEN` | Single-use, short-TTL bearer token from the UI (required) |
+| `--control-plane URL` | Control-plane base URL (required) |
+| `--ttl SECONDS` | Cert lifetime (default 3600) |
+| `--auto-approve` | Approve via admin kubeconfig (kind/dev only; defaults OFF) |
+| `--cleanup` | Delete the CSR + CRB on exit |
+| `--out PATH` | Scoped agent kubeconfig path (default `./argus-agent.kubeconfig`) |
+| `--admin-kubeconfig PATH` | Admin kubeconfig (default `$KUBECONFIG`/`~/.kube/config`) |
+| `--admin-context NAME` | Kube context inside the admin kubeconfig |
+| `--cluster-id ID` | Control-plane cluster id (default: resolve via `/api/clusters/self`) |
+| `--quiet` / `--verbose` | Log levels |
+
+### Tests
+
+```bash
+python3 -m pytest argus/tests/test_bootstrap.py -v
+```
+
+27 cases pin: keypair shape, 0600 private-key perms, CSR CN/O/signer,
+events_client Authorization + JSON body + 5xx retry, detail-payload size
+cap, auto-approve patches the Approved condition, RBAC is idempotent
+against an existing ClusterRole, ZERO secrets verbs in the read-only
+rules, `--cleanup` deletes both objects on success AND on failure, stage
+failures POST `error` events and exit non-zero, and the full happy-path
+event sequence matches the FROZEN wire contract.
+
 ## Done
 
 All five phases of `docs/argus-go-live-task.md` are implemented:

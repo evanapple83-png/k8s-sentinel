@@ -85,13 +85,22 @@ export const authConfig = {
       if (!authEnabled()) return true;
 
       const { pathname } = request.nextUrl;
-      // Public paths always allowed. `/api/agent/*` is machine-to-machine
-      // (the relay/agent), authenticated by install token / shared secret in
-      // the route itself — it must NOT be behind the user-session gate.
+      // Public paths always allowed. `/api/agent/*` and the pubkey-connect
+      // CLI endpoints (`/api/scans`, `/api/clusters/:id/events`) are
+      // machine-to-machine, authenticated by install / enrollment token in
+      // the route itself — they must NOT be behind the user-session gate.
+      // (`POST /api/clusters` IS session-auth'd; it stays under the gate.)
       if (
         pathname.startsWith('/login') ||
         pathname.startsWith('/api/auth') ||
         pathname.startsWith('/api/agent') ||
+        pathname.startsWith('/api/scans') ||
+        // `/api/clusters/self` — CLI Bearer-token self-resolution (cannot
+        // be a `_self` folder because Next.js App Router treats `_`-prefixed
+        // folders as private/unrouted). Matched exactly so other future
+        // `/api/clusters/<id>` shapes stay session-auth'd.
+        pathname === '/api/clusters/self' ||
+        /^\/api\/clusters\/[^/]+\/events\/?$/.test(pathname) ||
         pathname.startsWith('/mfa')
       ) {
         return true;

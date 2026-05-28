@@ -87,6 +87,70 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--no-network", action="store_true",
                       help="skip the live CISA KEV / EPSS fetch (use cache + override only)")
     scan.add_argument("--quiet", action="store_true", help="suppress info logging")
+    # Shortcut: full bootstrap + scan in one call. When set, the scan
+    # subcommand defers to the bootstrap flow (which itself invokes scan
+    # under the scoped agent kubeconfig).
+    scan.add_argument("--bootstrap", choices=["csr"], default=None,
+                      help="bootstrap a fresh agent identity then scan in one call "
+                           "(requires --enroll + --control-plane)")
+    scan.add_argument("--enroll", default=None,
+                      help="enrollment token (with --bootstrap csr)")
+    scan.add_argument("--control-plane", default=None,
+                      help="control-plane base URL (with --bootstrap csr)")
+
+    # ------------------------------------------------------------------ bootstrap
+    bootstrap_cmd = sub.add_parser(
+        "bootstrap",
+        help="bootstrap an agent identity (out-of-cluster, via CSR)",
+        description=(
+            "Bootstrap an agent identity using a fresh keypair + a "
+            "Kubernetes CertificateSigningRequest. Read-only RBAC is bound "
+            "to the cert's CN/O subjects; the private key never leaves this "
+            "machine; the cluster admin explicitly approves the cert."
+        ),
+    )
+    bsub = bootstrap_cmd.add_subparsers(dest="bootstrap_command", required=True)
+
+    csr = bsub.add_parser(
+        "csr",
+        help="generate keypair + CSR, get it approved, bind read-only RBAC, scan, push",
+        description=(
+            "Generate a fresh keypair + CertificateSigningRequest, get it "
+            "approved (by you running `kubectl certificate approve` or via "
+            "--auto-approve for dev/kind clusters), bind read-only RBAC, "
+            "assemble a scoped agent kubeconfig, run an argus scan with it, "
+            "and push the report to the control-plane.\n\n"
+            "SECURITY NOTES\n"
+            "  * Kubernetes client certificates are NOT revocable. The only "
+            "    mitigation is a short TTL (--ttl, default 3600s).\n"
+            "  * Approving the CSR and binding the RBAC requires "
+            "cluster-admin on your admin kubeconfig. This is intentional — "
+            "the cluster explicitly 'admits' the agent.\n"
+            "  * Private key never leaves this machine; lives in a 0600 "
+            "temp file, cleaned up on exit.\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    csr.add_argument("--enroll", required=True, metavar="TOKEN",
+                     help="enrollment token (single-use, short-TTL bearer)")
+    csr.add_argument("--control-plane", required=True, metavar="URL",
+                     help="control-plane base URL (e.g. https://app.example.com)")
+    csr.add_argument("--ttl", type=int, default=3600,
+                     help="cert lifetime in seconds (default: 3600)")
+    csr.add_argument("--auto-approve", action="store_true",
+                     help="approve the CSR programmatically (dev/kind only — defaults OFF)")
+    csr.add_argument("--cleanup", action="store_true",
+                     help="delete the CSR + ClusterRoleBinding on exit (run = ephemeral)")
+    csr.add_argument("--out", default="./argus-agent.kubeconfig",
+                     help="path to write the scoped agent kubeconfig (default: ./argus-agent.kubeconfig)")
+    csr.add_argument("--admin-kubeconfig", default=None,
+                     help="admin kubeconfig (default: $KUBECONFIG or ~/.kube/config)")
+    csr.add_argument("--admin-context", default=None,
+                     help="kube context inside the admin kubeconfig (default: current-context)")
+    csr.add_argument("--cluster-id", default=None,
+                     help="control-plane cluster id (default: resolved via /api/clusters/self)")
+    csr.add_argument("--quiet", action="store_true", help="suppress info logging")
+    csr.add_argument("--verbose", action="store_true", help="emit debug logging")
 
     return p
 
@@ -294,8 +358,13 @@ def _print_summary(report: dict, ar_result: accepted_risks.ApplyResult,
 # Logging
 # ---------------------------------------------------------------------------
 
-def _configure_logging(*, quiet: bool) -> None:
-    level = logging.WARNING if quiet else logging.INFO
+def _configure_logging(*, quiet: bool, verbose: bool = False) -> None:
+    if verbose:
+        level = logging.DEBUG
+    elif quiet:
+        level = logging.WARNING
+    else:
+        level = logging.INFO
     logging.basicConfig(level=level, format="%(message)s", stream=sys.stderr, force=True)
 
 
@@ -303,11 +372,75 @@ def _configure_logging(*, quiet: bool) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
+def cmd_bootstrap_csr(args: argparse.Namespace) -> int:
+    """``argus bootstrap csr`` — wraps :func:`argus.bootstrap.run_bootstrap_csr`
+    and maps its exceptions to clean exit codes / stderr messages."""
+    # Local import so the bootstrap module's cryptography dep is only
+    # required when the user actually runs this subcommand.
+    from argus import bootstrap as bs
+
+    verbose = getattr(args, "verbose", False)
+    _configure_logging(quiet=getattr(args, "quiet", False), verbose=verbose)
+    logger = logging.getLogger("argus.bootstrap")
+
+    opts = bs.BootstrapOptions(
+        enroll=args.enroll,
+        control_plane=args.control_plane,
+        ttl=args.ttl,
+        auto_approve=args.auto_approve,
+        cleanup=args.cleanup,
+        out=args.out,
+        admin_kubeconfig=args.admin_kubeconfig,
+        admin_context=args.admin_context,
+        log=logger,
+        cluster_id_override=args.cluster_id,
+    )
+    try:
+        result = bs.run_bootstrap_csr(opts)
+    except bs.BootstrapError as e:
+        print(f"argus bootstrap csr: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("argus bootstrap csr: interrupted", file=sys.stderr)
+        return 130
+    print(
+        f"\n[argus] bootstrap complete: clusterId={result.cluster_id} "
+        f"scanId={result.scan_id} kubeconfig={result.kubeconfig_path}",
+        file=sys.stderr,
+    )
+    return 0
+
+
 def main(argv: Optional[list] = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.command == "scan":
+        # --bootstrap csr shortcut: delegate to the full bootstrap flow.
+        if getattr(args, "bootstrap", None) == "csr":
+            if not args.enroll or not args.control_plane:
+                parser.error("--bootstrap csr requires --enroll and --control-plane")
+            # Re-pack the scan-side args into a bootstrap.csr Namespace
+            # with sensible defaults.
+            bs_args = argparse.Namespace(
+                enroll=args.enroll,
+                control_plane=args.control_plane,
+                ttl=3600,
+                auto_approve=False,
+                cleanup=False,
+                out="./argus-agent.kubeconfig",
+                admin_kubeconfig=args.kubeconfig,
+                admin_context=args.context,
+                cluster_id=None,
+                quiet=args.quiet,
+                verbose=False,
+            )
+            return cmd_bootstrap_csr(bs_args)
         return cmd_scan(args)
+    if args.command == "bootstrap":
+        if args.bootstrap_command == "csr":
+            return cmd_bootstrap_csr(args)
+        parser.print_help()
+        return 1
     parser.print_help()
     return 1
 
