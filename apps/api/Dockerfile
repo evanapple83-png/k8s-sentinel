@@ -139,12 +139,15 @@ RUN mkdir -p /app/data /app/argus-out \
  && chown -R 65532:65532 /app/data /app/argus-out
 
 # Build-time sanity: both stacks import + show their usage screens. Does NOT
-# touch a cluster; only proves the image is wired correctly.
-RUN node /app/dist/cli.js --help >/dev/null \
- && python3 -m argus.cli scan --help >/dev/null \
- && trivy --version >/dev/null \
- && kube-bench --help >/dev/null \
- && (kubescape version >/dev/null 2>&1 || true)
+# touch a cluster; only proves the image is wired correctly. Verbose on
+# purpose — when a sanity check fails inside the buildx layer, stdout
+# tells us which one without re-running with --progress=plain.
+RUN set -e; \
+    echo "::: node CLI :::"     && node /app/dist/cli.js --help; \
+    echo "::: argus CLI :::"    && python3 -m argus.cli scan --help; \
+    echo "::: trivy :::"        && trivy --version; \
+    echo "::: kube-bench :::"   && kube-bench --help; \
+    echo "::: kubescape :::"    && (kubescape version || true)
 
 USER 65532:65532
 
