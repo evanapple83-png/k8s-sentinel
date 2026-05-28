@@ -3,35 +3,61 @@ import type { SentinelConfig } from '../config.js';
 import { runScan } from '../orchestrator.js';
 import { SqliteStore } from '../store.js';
 import { approveFix, auditSink, loadRun, renderReport, reportForRun, type ReportFormat } from '../reporting.js';
+import { runArgusScan } from './argus.js';
 import { toPostureSnapshot } from './wire.js';
 import type { TunnelHandlers } from './client.js';
 
 /**
- * Wire the tunnel's down-commands to the SAME orchestrator/reporting paths the
- * SSE server uses, so hosted (hybrid) and in-cluster behaviour never diverge.
- * Read-only + propose-only is preserved: scan/ask/report read posture; approve
- * writes a reviewable PR bundle to disk and applies nothing to the cluster.
+ * Wire the tunnel's down-commands to the scan pipeline. Defaults to the v3
+ * ARGUS attack-graph engine (Python, runs as a subprocess); the legacy TS
+ * orchestrator is still reachable when ``SENTINEL_SCANNER=builtin`` is set,
+ * for A/B comparison or emergency rollback.
+ *
+ * Read-only + propose-only is preserved in both paths: scan/ask/report read
+ * posture; approve writes a reviewable PR bundle to disk and applies nothing
+ * to the cluster.
  */
 export function buildTunnelHandlers(config: SentinelConfig): TunnelHandlers {
+  const scanner = (process.env.SENTINEL_SCANNER ?? 'argus').toLowerCase();
   return {
     async scan(params, emit) {
-      const target = {
-        namespace: typeof params.namespace === 'string' ? params.namespace : undefined,
-        kubeconfig: typeof params.kubeconfig === 'string' ? params.kubeconfig : undefined,
-      };
-      const summary = await runScan({
-        config,
-        target,
-        onProgress: (message) => emit({ type: 'progress', message }),
+      if (scanner === 'builtin') {
+        const target = {
+          namespace: typeof params.namespace === 'string' ? params.namespace : undefined,
+          kubeconfig: typeof params.kubeconfig === 'string' ? params.kubeconfig : undefined,
+        };
+        const summary = await runScan({
+          config,
+          target,
+          onProgress: (message) => emit({ type: 'progress', message }),
+        });
+        const audit = await auditSink().list(summary.run.id);
+        return toPostureSnapshot({
+          run: summary.run,
+          findings: summary.findings,
+          paths: summary.paths,
+          proposals: summary.proposals,
+          audit,
+        });
+      }
+
+      // Default path — v3 ARGUS engine via Python subprocess.
+      emit({ type: 'progress', message: 'argus: collecting inventory + running scanners' });
+      const snapshot = await runArgusScan({
+        clusterName: typeof params.clusterName === 'string' ? params.clusterName : config.clusterName,
+        inCluster: params.inCluster !== false,
+        kubeconfig: typeof params.kubeconfig === 'string' ? params.kubeconfig : config.kubeconfig,
+        context: typeof params.context === 'string' ? params.context : undefined,
+        acceptedRisksDir: typeof params.acceptedRisksDir === 'string' ? params.acceptedRisksDir : process.env.ARGUS_ACCEPTED_RISKS_DIR,
+        noNetwork: params.noNetwork === true,
+        imagesOnly: params.imagesOnly === true,
+        log: (_level, msg, meta) => emit({ type: 'progress', message: meta ? `${msg} ${JSON.stringify(meta)}` : msg }),
       });
-      const audit = await auditSink().list(summary.run.id);
-      return toPostureSnapshot({
-        run: summary.run,
-        findings: summary.findings,
-        paths: summary.paths,
-        proposals: summary.proposals,
-        audit,
+      emit({
+        type: 'progress',
+        message: `argus: ${snapshot.findings.length} findings, ${snapshot.paths.length} attack paths, risk ${snapshot.run.riskScore ?? '?'}`,
       });
+      return snapshot;
     },
 
     async ask(query) {
