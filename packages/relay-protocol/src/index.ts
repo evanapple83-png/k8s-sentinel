@@ -45,6 +45,23 @@ export const ControlRefSchema = z.object({
   title: ShortStr().optional(),
 });
 
+/**
+ * SSVC (Stakeholder-Specific Vulnerability Categorization) decision — emitted
+ * by the v3 attack-graph engine. ``Act`` = exploited + reaches a crown jewel;
+ * ``Track*`` = no reachable impact today. Optional so pre-v3 agents still
+ * validate.
+ */
+export const SsvcDecisionSchema = z.enum(['Act', 'Attend', 'Track', 'Track*']);
+
+/**
+ * Confidence in a finding's reachability. ``medium`` is set when reachability
+ * depends on an *absent* control (e.g. no NetworkPolicy), so the operator
+ * understands the score is "would-be" rather than observed.
+ */
+export const ConfidenceSchema = z.enum(['high', 'medium', 'n/a']);
+
+export const ExposureSchema = z.enum(['open', 'internal', 'small', 'cluster']);
+
 export const WireFindingSchema = z.object({
   id: ShortStr(),
   source: ShortStr(),
@@ -58,6 +75,24 @@ export const WireFindingSchema = z.object({
   attackPathId: ShortStr().optional(),
   controls: z.array(ControlRefSchema).max(64).optional(),
   baseScore: z.number().finite().optional(),
+
+  // --- v3 attack-graph fields (all optional; legacy agents omit) ----------
+  /** CVE identifier when ``source === 'trivy'`` / type === 'cve'. */
+  cve: ShortStr(64).optional(),
+  /** Listed in the live CISA KEV catalogue at scan time. */
+  kev: z.boolean().optional(),
+  /** Tagged "Known Ransomware Campaign Use" in CISA KEV. */
+  ransomware: z.boolean().optional(),
+  /** EPSS probability (0..1) the CVE is exploited in the next 30 days. */
+  epss: z.number().min(0).max(1).optional(),
+  /** Stakeholder-Specific Vulnerability Categorization decision. */
+  ssvc: SsvcDecisionSchema.optional(),
+  /** Confidence in the reachability classification. */
+  confidence: ConfidenceSchema.optional(),
+  /** Exposure category from the attack graph (open / internal / small / cluster). */
+  exposure: ExposureSchema.optional(),
+  /** Crown-jewel categories this finding's path traverses (e.g. secret, cloud_admin). */
+  reaches: z.array(ShortStr(64)).max(32).optional(),
 });
 
 export const WireAttackStepSchema = z.object({
