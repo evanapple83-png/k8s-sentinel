@@ -93,7 +93,10 @@ spec:
             - name: tmp
               mountPath: /tmp
             - name: data
-              mountPath: /data
+              # The agent/server write ./data (sqlite + audit) relative to the
+              # image WORKDIR (/app); mount the writable volume there so it works
+              # under readOnlyRootFilesystem.
+              mountPath: /app/data
             {{- if and (eq .Values.mode "hybrid") .Values.relay.clientCertSecret }}
             - name: relay-certs
               mountPath: /etc/sentinel/relay-certs

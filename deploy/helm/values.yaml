@@ -4,7 +4,7 @@ nameOverride: ""
 fullnameOverride: ""
 
 image:
-  repository: ghcr.io/your-org/k8s-sentinel
+  repository: ghcr.io/evanapple83-png/k8s-sentinel
   tag: "0.1.0"
   pullPolicy: IfNotPresent
 
