@@ -315,12 +315,27 @@ interface RawReport {
   [k: string]: unknown;
 }
 
+/** Top-level structural signals every explain-* endpoint passes (kept identical
+ *  across endpoints so the cached prefix is reusable across explain-finding /
+ *  explain-path / explain-fix for the same scan). */
+function topLevelContext(report: RawReport): Pick<RawReport, 'cluster' | 'scannedAt' | 'riskScore' | 'intel' | 'reachableJewels' | 'paths' | 'chokePoints'> {
+  return {
+    cluster: report.cluster,
+    scannedAt: report.scannedAt,
+    riskScore: report.riskScore,
+    intel: report.intel,
+    reachableJewels: report.reachableJewels,
+    paths: report.paths,
+    chokePoints: report.chokePoints,
+  };
+}
+
 /**
- * For explain-finding: pass the top-level intel + reachableJewels + paths +
- * chokePoints, plus ONLY the targeted finding from `findings[]`. Drops
- * activeFindings / workloads / acceptedRisks / refusals / metadata (big and
- * irrelevant for one-finding context). Stays well under the cache window
- * while preserving the engine's structural signals.
+ * For explain-finding: pass the top-level structural signals plus ONLY the
+ * targeted finding from `findings[]`. Drops activeFindings / workloads /
+ * acceptedRisks / refusals / metadata (big and irrelevant for one-finding
+ * context). Stays well under the cache window while preserving every
+ * structural signal the model needs to reason about the finding's reach.
  */
 export function buildFindingContext(report: RawReport, findingId: string): {
   context: RawReport;
@@ -332,19 +347,113 @@ export function buildFindingContext(report: RawReport, findingId: string): {
     return { context: { cluster: report.cluster, scannedAt: report.scannedAt }, found: false };
   }
   return {
+    context: { ...topLevelContext(report), findings: [target] },
+    found: true,
+  };
+}
+
+/**
+ * For explain-path: pass the top-level structural signals, narrow `paths` to
+ * just the targeted entry, and include the findings whose workload appears in
+ * the path's hops (so the model can name CVE-XXX and tie it to a step).
+ */
+export function buildPathContext(report: RawReport, pathTarget: string): {
+  context: RawReport;
+  found: boolean;
+} {
+  const paths = report.paths ?? {};
+  const steps = (paths as Record<string, unknown>)[pathTarget];
+  if (!Array.isArray(steps) || steps.length === 0) {
+    return { context: { cluster: report.cluster, scannedAt: report.scannedAt }, found: false };
+  }
+  // Workload ids the path traverses. v3 step shape: [from, to, label, control, inferred].
+  const workloadIds = new Set<string>();
+  for (const step of steps as unknown[][]) {
+    for (let i = 0; i < 2; i += 1) {
+      const node = step[i];
+      if (typeof node === 'string' && node.startsWith('wl:')) {
+        workloadIds.add(node.slice(3));
+      }
+    }
+  }
+  const allFindings = Array.isArray(report.findings) ? report.findings : [];
+  const relevant = allFindings.filter((f) => {
+    if (!f || typeof f !== 'object') return false;
+    const target = (f as { target?: unknown }).target;
+    return typeof target === 'string' && workloadIds.has(target);
+  });
+  return {
     context: {
-      cluster: report.cluster,
-      scannedAt: report.scannedAt,
-      riskScore: report.riskScore,
-      intel: report.intel,
-      reachableJewels: report.reachableJewels,
-      paths: report.paths,
-      chokePoints: report.chokePoints,
-      // Only one finding — enough for the model to explain it in cluster context.
-      findings: [target],
+      ...topLevelContext(report),
+      // Replace `paths` with only the targeted one — keeps the structural
+      // shape but doesn't blow the cache window on busy clusters.
+      paths: { [pathTarget]: steps },
+      findings: relevant,
     },
     found: true,
   };
+}
+
+/**
+ * For explain-fix: pass the top-level structural signals + the targeted
+ * choke-point + the paths it claims to break + the findings on workloads
+ * along those paths (enough for the model to defend the leverage claim).
+ */
+export function buildFixContext(report: RawReport, chokePointIndex: number): {
+  context: RawReport;
+  found: boolean;
+} {
+  const chokes = Array.isArray(report.chokePoints) ? report.chokePoints : [];
+  if (chokePointIndex < 0 || chokePointIndex >= chokes.length) {
+    return { context: { cluster: report.cluster, scannedAt: report.scannedAt }, found: false };
+  }
+  const target = chokes[chokePointIndex] as { targets?: unknown };
+  const targetJewels = Array.isArray(target?.targets) ? (target.targets as string[]).filter((t): t is string => typeof t === 'string') : [];
+  const allPaths = report.paths ?? {};
+  const relevantPaths: Record<string, unknown> = {};
+  const workloadIds = new Set<string>();
+  for (const jewel of targetJewels) {
+    const steps = (allPaths as Record<string, unknown>)[jewel];
+    if (Array.isArray(steps)) {
+      relevantPaths[jewel] = steps;
+      for (const step of steps as unknown[][]) {
+        for (let i = 0; i < 2; i += 1) {
+          const node = step[i];
+          if (typeof node === 'string' && node.startsWith('wl:')) workloadIds.add(node.slice(3));
+        }
+      }
+    }
+  }
+  const allFindings = Array.isArray(report.findings) ? report.findings : [];
+  const relevant = allFindings.filter((f) => {
+    if (!f || typeof f !== 'object') return false;
+    const t = (f as { target?: unknown }).target;
+    return typeof t === 'string' && workloadIds.has(t);
+  });
+  return {
+    context: {
+      ...topLevelContext(report),
+      paths: relevantPaths,
+      chokePoints: [chokes[chokePointIndex]],
+      findings: relevant,
+    },
+    found: true,
+  };
+}
+
+/**
+ * For ask: pass the FULL report. Open-ended Q&A may touch anything. If the
+ * report is huge (>120 KB serialized) trim acceptedRisks/refusals/autoReopened
+ * and activeFindings/workloads first — those are the noisy fields.
+ */
+export function buildAskContext(report: RawReport): RawReport {
+  const serialized = stableStringify(report);
+  if (serialized.length <= 120_000) return report;
+  const trimmed = { ...report };
+  for (const k of ['activeFindings', 'workloads', 'acceptedRisks', 'refusals', 'autoReopened', 'metadata']) {
+    delete (trimmed as Record<string, unknown>)[k];
+  }
+  return trimmed;
 }
 
 /**
@@ -645,6 +754,116 @@ export async function loadLatestScanReport(clusterId: string): Promise<{
 }
 
 // ---------------------------------------------------------------------------
+// Shared pipeline: every explain-* endpoint shares this scaffold.
+// Pipeline: API-key check → rate limit → load scan → build context →
+//           callClaude → extract → post-check → record usage + audit.
+// ---------------------------------------------------------------------------
+
+interface RunPipelineInput {
+  accountId: string;
+  userId: string;
+  clusterId: string;
+  endpoint: NarrationEndpoint;
+  targetKind: 'finding' | 'path' | 'fix' | 'ask';
+  targetId: string;
+  modelOverride?: string;
+  fetchImpl?: typeof fetch;
+  /** Build the trimmed slice + user message for this endpoint. */
+  buildContext: (report: RawReport, scanId: string) => {
+    context: RawReport;
+    userMessage: string;
+    /** Set when the target doesn't exist in the scan; pipeline returns a 422. */
+    notFoundMessage?: string;
+  };
+  /** Max output tokens — different per endpoint (4-8 sentences vs longer narration). */
+  maxTokens: number;
+}
+
+async function runExplainPipeline(input: RunPipelineInput): Promise<NarrationResponse> {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new AiNarrationError(503, 'AI narration not configured: missing ANTHROPIC_API_KEY');
+  }
+  const model = input.modelOverride ?? process.env.AI_NARRATION_MODEL ?? 'claude-sonnet-4-6';
+
+  await checkAndReserveRateLimit({ accountId: input.accountId, userId: input.userId, model });
+
+  const latest = await loadLatestScanReport(input.clusterId);
+  if (!latest) {
+    throw new AiNarrationError(404, 'No scan found for this cluster yet — run one before asking for an explanation');
+  }
+  const { scanId, report } = latest;
+  const built = input.buildContext(report, scanId);
+  if (built.notFoundMessage) {
+    throw new AiNarrationError(422, built.notFoundMessage);
+  }
+
+  const reportJson = stableStringify(built.context);
+  const systemBlocks: AnthropicSystemBlock[] = [
+    { type: 'text', text: SYSTEM_PROMPT },
+    {
+      type: 'text',
+      text: `Latest scan report (JSON) for cluster ${built.context.cluster ?? input.clusterId}:\n\n${reportJson}`,
+      cache_control: { type: 'ephemeral' },
+    },
+  ];
+  const messages: AnthropicMessage[] = [{ role: 'user', content: built.userMessage }];
+  const promptHash = createHash('sha256')
+    .update(SYSTEM_PROMPT)
+    .update('\n--\n')
+    .update(reportJson)
+    .update('\n--\n')
+    .update(built.userMessage)
+    .digest('hex');
+
+  const fetchImpl = input.fetchImpl ?? globalThis.fetch;
+  let upstream;
+  try {
+    upstream = await callClaude({ apiKey, model, systemBlocks, messages, maxTokens: input.maxTokens, fetchImpl });
+  } catch (err) {
+    await writeAudit({
+      accountId: input.accountId, userId: input.userId, clusterId: input.clusterId, scanId,
+      endpoint: input.endpoint, model,
+      targetKind: input.targetKind, targetId: input.targetId, promptHash,
+      status: 'error',
+      usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
+      costMicroCents: 0, outputText: '', hasCitationWarning: false,
+      errorMessage: err instanceof Error ? err.message : String(err),
+    }).catch(() => undefined);
+    throw err;
+  }
+
+  const explanation = extractText(upstream).trim();
+  const { citations, warnings } = extractCitations(explanation, report);
+  const hasCitationWarning = warnings.length > 0;
+  const finalExplanation = hasCitationWarning
+    ? `${explanation}\n\n_Note: this response referenced item${warnings.length === 1 ? '' : 's'} not in the current scan (${warnings.slice(0, 3).join(', ')})._`
+    : explanation;
+  const usage: NarrationResponse['usage'] = {
+    inputTokens: upstream.usage.input_tokens ?? 0,
+    outputTokens: upstream.usage.output_tokens ?? 0,
+    cacheCreationInputTokens: upstream.usage.cache_creation_input_tokens ?? 0,
+    cacheReadInputTokens: upstream.usage.cache_read_input_tokens ?? 0,
+  };
+  const cost = costMicroCents(model, usage);
+
+  await Promise.all([
+    recordUsage({ accountId: input.accountId, userId: input.userId, costMicroCents: cost }).catch((e) =>
+      console.error('[ai-narration] recordUsage failed:', e),
+    ),
+    writeAudit({
+      accountId: input.accountId, userId: input.userId, clusterId: input.clusterId, scanId,
+      endpoint: input.endpoint, model,
+      targetKind: input.targetKind, targetId: input.targetId, promptHash,
+      status: upstream.stop_reason === 'refusal' ? 'refused' : 'ok',
+      usage, costMicroCents: cost, outputText: finalExplanation, hasCitationWarning,
+    }).catch((e) => console.error('[ai-narration] writeAudit failed:', e)),
+  ]);
+
+  return { explanation: finalExplanation, citations, citationWarning: hasCitationWarning, model, usage };
+}
+
+// ---------------------------------------------------------------------------
 // THE endpoint: explain a single finding.
 // ---------------------------------------------------------------------------
 
@@ -661,136 +880,163 @@ export async function loadLatestScanReport(clusterId: string): Promise<{
  * Caller (the route) handles HTTP shaping — this function throws typed errors.
  */
 export async function explainFinding(input: ExplainFindingInput): Promise<NarrationResponse> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) {
-    throw new AiNarrationError(503, 'AI narration not configured: missing ANTHROPIC_API_KEY');
-  }
-  const model = input.modelOverride ?? process.env.AI_NARRATION_MODEL ?? 'claude-sonnet-4-6';
-
-  // 1. Rate + cost cap. Rejecting BEFORE the Anthropic call protects spend.
-  await checkAndReserveRateLimit({ accountId: input.accountId, userId: input.userId, model });
-
-  // 2. Latest scan.
-  const latest = await loadLatestScanReport(input.clusterId);
-  if (!latest) {
-    throw new AiNarrationError(404, 'No scan found for this cluster yet — run one before asking for an explanation');
-  }
-  const { scanId, report } = latest;
-
-  // 3. Trim context to the targeted finding + structural top-level. If the
-  // finding id isn't in this scan, refuse outright — saves an Anthropic call
-  // and an audit "model invented an ID" follow-up.
-  const { context, found } = buildFindingContext(report, input.findingId);
-  if (!found) {
-    throw new AiNarrationError(
-      422,
-      `Finding ${input.findingId} is not in the latest scan for this cluster. (It may have closed, or you may be looking at a stale tab.)`,
-    );
-  }
-
-  // 4. Build the prompt. System prompt + report context are cached together;
-  //    only the user turn varies per request.
-  const reportJson = stableStringify(context);
-  const userMessage = [
-    `Explain finding ${input.findingId} in plain English for a smart non-expert.`,
-    'Cover: what the issue is, why it matters on THIS workload (cite the relevant attack-path step or chokepoint if any), and what the recommended action is.',
-    'Keep it to 4-8 sentences. Cite finding ids and path targets verbatim from the report.',
-  ].join(' ');
-  const systemBlocks: AnthropicSystemBlock[] = [
-    { type: 'text', text: SYSTEM_PROMPT },
-    {
-      type: 'text',
-      text: `Latest scan report (JSON) for cluster ${context.cluster ?? input.clusterId}:\n\n${reportJson}`,
-      cache_control: { type: 'ephemeral' },
+  return runExplainPipeline({
+    accountId: input.accountId,
+    userId: input.userId,
+    clusterId: input.clusterId,
+    endpoint: 'explain-finding',
+    targetKind: 'finding',
+    targetId: input.findingId,
+    modelOverride: input.modelOverride,
+    fetchImpl: input.fetchImpl,
+    maxTokens: 1024,
+    buildContext: (report) => {
+      const { context, found } = buildFindingContext(report, input.findingId);
+      if (!found) {
+        return {
+          context,
+          userMessage: '',
+          notFoundMessage: `Finding ${input.findingId} is not in the latest scan for this cluster. (It may have closed, or you may be looking at a stale tab.)`,
+        };
+      }
+      return {
+        context,
+        userMessage: [
+          `Explain finding ${input.findingId} in plain English for a smart non-expert.`,
+          'Cover: what the issue is, why it matters on THIS workload (cite the relevant attack-path step or chokepoint if any), and what the recommended action is.',
+          'Keep it to 4-8 sentences. Cite finding ids and path targets verbatim from the report.',
+        ].join(' '),
+      };
     },
-  ];
-  const messages: AnthropicMessage[] = [{ role: 'user', content: userMessage }];
+  });
+}
 
-  const promptHash = createHash('sha256')
-    .update(SYSTEM_PROMPT)
-    .update('\n--\n')
-    .update(reportJson)
-    .update('\n--\n')
-    .update(userMessage)
-    .digest('hex');
+// ---------------------------------------------------------------------------
+// explain-path: narrate an attack chain in defensive terms.
+// ---------------------------------------------------------------------------
 
-  // 5. Call Claude.
-  const fetchImpl = input.fetchImpl ?? globalThis.fetch;
-  let upstream;
-  try {
-    upstream = await callClaude({
-      apiKey,
-      model,
-      systemBlocks,
-      messages,
-      maxTokens: 1024,
-      fetchImpl,
-    });
-  } catch (err) {
-    await writeAudit({
-      accountId: input.accountId,
-      userId: input.userId,
-      clusterId: input.clusterId,
-      scanId,
-      endpoint: 'explain-finding',
-      model,
-      targetKind: 'finding',
-      targetId: input.findingId,
-      promptHash,
-      status: 'error',
-      usage: { inputTokens: 0, outputTokens: 0, cacheCreationInputTokens: 0, cacheReadInputTokens: 0 },
-      costMicroCents: 0,
-      outputText: '',
-      hasCitationWarning: false,
-      errorMessage: err instanceof Error ? err.message : String(err),
-    }).catch(() => undefined);
-    throw err;
+export interface ExplainPathInput {
+  accountId: string;
+  userId: string;
+  clusterId: string;
+  /** v3 path target — the jewel key, e.g. 'secret:payments/db-credentials' or 'CLUSTER-ADMIN'. */
+  pathTarget?: string;
+  /**
+   * Alternative to pathTarget: 0-based index into the engine's path list
+   * (matches WireAttackPath.id = `ap-${index+1}` in the dashboard's render
+   * order). Useful because the wire shape doesn't carry the original jewel
+   * key per-path; the UI gives us the positional index and we resolve here.
+   */
+  pathIndex?: number;
+  modelOverride?: string;
+  fetchImpl?: typeof fetch;
+}
+
+/** Resolve report.paths into a deterministic list of jewel keys, matching
+ *  the mapper's filter (drop empty step lists) so pathIndex stays aligned
+ *  with the WireAttackPath array the UI rendered. */
+function listActivePathTargets(report: RawReport): string[] {
+  const entries = Object.entries(report.paths ?? {});
+  return entries
+    .filter(([, steps]) => Array.isArray(steps) && steps.length > 0)
+    .map(([k]) => k);
+}
+
+export async function explainPath(input: ExplainPathInput): Promise<NarrationResponse> {
+  if (!input.pathTarget && input.pathIndex == null) {
+    throw new AiNarrationError(400, 'Either pathTarget or pathIndex is required');
   }
+  return runExplainPipeline({
+    accountId: input.accountId,
+    userId: input.userId,
+    clusterId: input.clusterId,
+    endpoint: 'explain-path',
+    targetKind: 'path',
+    targetId: input.pathTarget ?? `idx:${input.pathIndex}`,
+    modelOverride: input.modelOverride,
+    fetchImpl: input.fetchImpl,
+    // Paths are 3-6 hops — a slightly longer cap leaves room for one
+    // sentence per hop plus a wrap-up. Still bounded for cost.
+    maxTokens: 1500,
+    buildContext: (report) => {
+      // Resolve target. pathTarget wins when both are set.
+      let target = input.pathTarget;
+      if (!target && input.pathIndex != null) {
+        const targets = listActivePathTargets(report);
+        if (input.pathIndex >= 0 && input.pathIndex < targets.length) {
+          target = targets[input.pathIndex];
+        }
+      }
+      if (!target) {
+        return {
+          context: { cluster: report.cluster, scannedAt: report.scannedAt },
+          userMessage: '',
+          notFoundMessage: 'Attack path is not in the latest scan for this cluster.',
+        };
+      }
+      const { context, found } = buildPathContext(report, target);
+      if (!found) {
+        return {
+          context,
+          userMessage: '',
+          notFoundMessage: `Path to ${target} is not in the latest scan for this cluster.`,
+        };
+      }
+      return {
+        context,
+        userMessage: [
+          `Narrate the attack path to ${target} in defensive language for a smart non-expert.`,
+          'Walk hop-by-hop from the external entry point to the crown jewel: at each step, name what the attacker does and which control would break the chain.',
+          'Call out any step marked inferred (low-confidence — based on an absent control rather than an observed attack).',
+          'End with which chokepoint(s) from the report eliminate this path. Cite path target + finding ids + chokepoint descriptions verbatim from the report.',
+        ].join(' '),
+      };
+    },
+  });
+}
 
-  // 6. Extract + post-check.
-  const explanation = extractText(upstream).trim();
-  const { citations, warnings } = extractCitations(explanation, report);
-  const hasCitationWarning = warnings.length > 0;
-  const finalExplanation = hasCitationWarning
-    ? `${explanation}\n\n_Note: this response referenced item${warnings.length === 1 ? '' : 's'} not in the current scan (${warnings.slice(0, 3).join(', ')})._`
-    : explanation;
+// ---------------------------------------------------------------------------
+// explain-fix: defend a chokepoint's "why this fix?" leverage claim.
+// ---------------------------------------------------------------------------
 
-  const usage: NarrationResponse['usage'] = {
-    inputTokens: upstream.usage.input_tokens ?? 0,
-    outputTokens: upstream.usage.output_tokens ?? 0,
-    cacheCreationInputTokens: upstream.usage.cache_creation_input_tokens ?? 0,
-    cacheReadInputTokens: upstream.usage.cache_read_input_tokens ?? 0,
-  };
-  const cost = costMicroCents(model, usage);
+export interface ExplainFixInput {
+  accountId: string;
+  userId: string;
+  clusterId: string;
+  /** 0-based index into the report's chokePoints[] array. */
+  chokePointIndex: number;
+  modelOverride?: string;
+  fetchImpl?: typeof fetch;
+}
 
-  // 7. Record + audit. Done in parallel — neither blocks the response.
-  await Promise.all([
-    recordUsage({ accountId: input.accountId, userId: input.userId, costMicroCents: cost }).catch((e) =>
-      console.error('[ai-narration] recordUsage failed:', e),
-    ),
-    writeAudit({
-      accountId: input.accountId,
-      userId: input.userId,
-      clusterId: input.clusterId,
-      scanId,
-      endpoint: 'explain-finding',
-      model,
-      targetKind: 'finding',
-      targetId: input.findingId,
-      promptHash,
-      status: upstream.stop_reason === 'refusal' ? 'refused' : 'ok',
-      usage,
-      costMicroCents: cost,
-      outputText: finalExplanation,
-      hasCitationWarning,
-    }).catch((e) => console.error('[ai-narration] writeAudit failed:', e)),
-  ]);
-
-  return {
-    explanation: finalExplanation,
-    citations,
-    citationWarning: hasCitationWarning,
-    model,
-    usage,
-  };
+export async function explainFix(input: ExplainFixInput): Promise<NarrationResponse> {
+  return runExplainPipeline({
+    accountId: input.accountId,
+    userId: input.userId,
+    clusterId: input.clusterId,
+    endpoint: 'explain-fix',
+    targetKind: 'fix',
+    targetId: String(input.chokePointIndex),
+    modelOverride: input.modelOverride,
+    fetchImpl: input.fetchImpl,
+    maxTokens: 1024,
+    buildContext: (report) => {
+      const { context, found } = buildFixContext(report, input.chokePointIndex);
+      if (!found) {
+        return {
+          context,
+          userMessage: '',
+          notFoundMessage: `Choke-point #${input.chokePointIndex} is not in the latest scan for this cluster.`,
+        };
+      }
+      return {
+        context,
+        userMessage: [
+          `Explain why chokepoint #${input.chokePointIndex} (see chokePoints[${input.chokePointIndex}] in the report) is the highest-leverage move right now.`,
+          'Cover: what it changes in the graph (which paths collapse), the concrete CVEs / RBAC bindings / configs it eliminates, and one or two practical notes about side-effects (e.g. workloads that legitimately need a flag this fix drops).',
+          'Keep it to 4-8 sentences. Cite path targets + finding ids verbatim from the report.',
+        ].join(' '),
+      };
+    },
+  });
 }

@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   SYSTEM_PROMPT,
+  buildAskContext,
   buildFindingContext,
+  buildFixContext,
+  buildPathContext,
   callClaude,
   costMicroCents,
   extractCitations,
@@ -89,6 +92,89 @@ describe('buildFindingContext', () => {
     expect((context as Record<string, unknown>).activeFindings).toBeUndefined();
     expect((context as Record<string, unknown>).workloads).toBeUndefined();
     expect((context as Record<string, unknown>).metadata).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildPathContext
+// ---------------------------------------------------------------------------
+
+describe('buildPathContext', () => {
+  it('narrows paths to the targeted entry + keeps related findings', () => {
+    const { context, found } = buildPathContext(fixtureReport() as never, 'secret:payments/db-credentials');
+    expect(found).toBe(true);
+    expect(Object.keys(context.paths ?? {})).toEqual(['secret:payments/db-credentials']);
+    // payments/invoice-api is on this path's hops → its finding should be included.
+    const ids = (context.findings ?? []).map((f) => (f as { id: string }).id);
+    expect(ids).toContain('trivy-001');
+    // batch/report-worker is NOT on this path → its finding should be excluded.
+    expect(ids).not.toContain('trivy-002');
+  });
+
+  it('returns found=false when the path target is unknown', () => {
+    const { found } = buildPathContext(fixtureReport() as never, 'nonexistent:jewel');
+    expect(found).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildFixContext
+// ---------------------------------------------------------------------------
+
+describe('buildFixContext', () => {
+  it('narrows paths + chokePoints to the targeted index', () => {
+    const { context, found } = buildFixContext(fixtureReport() as never, 0);
+    expect(found).toBe(true);
+    expect(context.chokePoints).toHaveLength(1);
+    expect(Object.keys(context.paths ?? {})).toEqual(['secret:payments/db-credentials']);
+    // findings narrowed to ones on a workload along the broken paths
+    const ids = (context.findings ?? []).map((f) => (f as { id: string }).id);
+    expect(ids).toContain('trivy-001');
+    expect(ids).not.toContain('trivy-002');
+  });
+
+  it('returns found=false on a missing index', () => {
+    const { found } = buildFixContext(fixtureReport() as never, 99);
+    expect(found).toBe(false);
+  });
+
+  it('returns found=false on a negative index', () => {
+    const { found } = buildFixContext(fixtureReport() as never, -1);
+    expect(found).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildAskContext — open-ended, full report unless oversized
+// ---------------------------------------------------------------------------
+
+describe('buildAskContext', () => {
+  it('returns the report verbatim when under the size cap', () => {
+    const r = fixtureReport();
+    const out = buildAskContext(r as never);
+    expect(out).toEqual(r);
+  });
+
+  it('strips noisy fields when the serialized report exceeds 120 KB', () => {
+    const big = {
+      ...fixtureReport(),
+      // pad activeFindings beyond the threshold
+      activeFindings: Array.from({ length: 2000 }, (_, i) => ({
+        id: `af-${i}`,
+        long: 'x'.repeat(100),
+      })),
+      workloads: ['noisy'],
+      metadata: { x: 1 },
+    };
+    expect(stableStringify(big).length).toBeGreaterThan(120_000);
+    const out = buildAskContext(big as never);
+    expect((out as Record<string, unknown>).activeFindings).toBeUndefined();
+    expect((out as Record<string, unknown>).workloads).toBeUndefined();
+    expect((out as Record<string, unknown>).metadata).toBeUndefined();
+    // Structural top-level fields preserved.
+    expect(out.intel).toBeDefined();
+    expect(out.paths).toBeDefined();
+    expect(out.findings).toBeDefined();
   });
 });
 
