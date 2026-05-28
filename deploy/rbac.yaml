@@ -1,0 +1,102 @@
+# ARGUS — read-only RBAC.
+#
+# This is the entire authorization surface ARGUS needs to build the Inventory
+# and run posture scans. The contract:
+#
+#   * Only verbs are get / list / watch. No write/patch/delete anywhere.
+#   * Secrets are intentionally absent. Secret reachability is derived from
+#     RBAC rules + pod volume/env references (see argus/inventory.py:
+#     _secrets_from_workload_refs). Granting list on secrets would let the
+#     collector touch .data; we keep that door shut.
+#   * Roles/RoleBindings/ClusterRoles/ClusterRoleBindings ARE listed (no
+#     verbs on their contents — we only read the rule shapes to project
+#     per-ServiceAccount permissions).
+#
+# Apply: kubectl apply -f deploy/rbac.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argus-system
+  labels:
+    app.kubernetes.io/name: argus
+    app.kubernetes.io/part-of: argus
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: argus
+  namespace: argus-system
+  labels:
+    app.kubernetes.io/name: argus
+    app.kubernetes.io/part-of: argus
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: argus-readonly
+  labels:
+    app.kubernetes.io/name: argus
+    app.kubernetes.io/part-of: argus
+rules:
+  # Workloads, pods, services, service accounts, namespaces.
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - services
+      - serviceaccounts
+    verbs: ["get", "list", "watch"]
+
+  # Deployments / StatefulSets / DaemonSets for the workload list.
+  # ReplicaSets included so the collector can resolve owner refs if needed
+  # later (currently unused — kept narrow for forward-compat without further
+  # RBAC churn).
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - statefulsets
+      - daemonsets
+      - replicasets
+    verbs: ["get", "list", "watch"]
+
+  # Network reachability: Ingresses + NetworkPolicies.
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+      - networkpolicies
+    verbs: ["get", "list", "watch"]
+
+  # RBAC graph: needed to answer "can this SA read Secrets?" without ever
+  # reading a Secret itself.
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - rolebindings
+      - clusterroles
+      - clusterrolebindings
+    verbs: ["get", "list", "watch"]
+
+  # === explicitly NOT granted ===
+  # - secrets (any verb)               — see argus/inventory.py
+  # - any *.create / update / patch / delete / deletecollection
+  # - pods/exec, pods/portforward, pods/proxy
+  # - nodes / nodes/proxy / nodes/stats
+  # - any custom resources
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: argus-readonly
+  labels:
+    app.kubernetes.io/name: argus
+    app.kubernetes.io/part-of: argus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: argus-readonly
+subjects:
+  - kind: ServiceAccount
+    name: argus
+    namespace: argus-system
