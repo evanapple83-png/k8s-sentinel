@@ -33,3 +33,17 @@ reports/out/
 *.log
 .vscode/
 .idea/
+
+# Python (argus/ engine + scanners)
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.pytest_cache/
+
+# ARGUS runtime artifacts (regenerated every scan)
+argus/engine_v3/cache/
+argus/engine_v3/out/
+argus/engine_v3/report.md
+argus/engine_v3/report.json

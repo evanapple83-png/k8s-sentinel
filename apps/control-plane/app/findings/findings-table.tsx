@@ -4,11 +4,19 @@ import { useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { SeverityBadge } from '@/components/ui/badge';
-import { SourceBadge, ReachableBadge } from '@/components/bits';
+import {
+  SourceBadge,
+  ReachableBadge,
+  KevBadge,
+  RansomwareBadge,
+  SsvcBadge,
+  EpssChip,
+} from '@/components/bits';
 import { cn } from '@/lib/utils';
-import type { Finding, Severity } from '@/lib/types';
+import type { Finding, Severity, SsvcDecision } from '@/lib/types';
 
 const SEVERITIES: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
+const SSVC_TIERS: SsvcDecision[] = ['Act', 'Attend', 'Track', 'Track*'];
 
 function scoreColor(score: number): string {
   return score >= 70 ? 'var(--critical)' : score >= 40 ? 'var(--warn)' : 'var(--clear)';
@@ -18,9 +26,15 @@ export function FindingsTable({ findings }: { findings: Finding[] }) {
   const [q, setQ] = useState('');
   const [sevs, setSevs] = useState<Set<Severity>>(new Set());
   const [reachableOnly, setReachableOnly] = useState(false);
+  const [kevOnly, setKevOnly] = useState(false);
+  const [ssvcs, setSsvcs] = useState<Set<SsvcDecision>>(new Set());
 
   const sources = useMemo(
     () => [...new Set(findings.map((f) => f.source))].sort(),
+    [findings],
+  );
+  const hasV3 = useMemo(
+    () => findings.some((f) => f.ssvc != null || f.kev != null || f.epss != null),
     [findings],
   );
   const [srcs, setSrcs] = useState<Set<string>>(new Set());
@@ -29,14 +43,16 @@ export function FindingsTable({ findings }: { findings: Finding[] }) {
     return findings.filter((f) => {
       if (sevs.size && !sevs.has(f.severity)) return false;
       if (srcs.size && !srcs.has(f.source)) return false;
+      if (ssvcs.size && (f.ssvc == null || !ssvcs.has(f.ssvc))) return false;
       if (reachableOnly && !f.reachable) return false;
+      if (kevOnly && !f.kev) return false;
       if (q) {
-        const hay = `${f.title} ${f.ruleId} ${f.resource.name} ${f.resource.image ?? ''}`.toLowerCase();
+        const hay = `${f.title} ${f.ruleId} ${f.resource.name} ${f.resource.image ?? ''} ${f.cve ?? ''}`.toLowerCase();
         if (!hay.includes(q.toLowerCase())) return false;
       }
       return true;
     }).sort((a, b) => (b.exploitScore ?? 0) - (a.exploitScore ?? 0));
-  }, [findings, q, sevs, srcs, reachableOnly]);
+  }, [findings, q, sevs, srcs, ssvcs, reachableOnly, kevOnly]);
 
   function toggle<T>(set: Set<T>, v: T, setter: (s: Set<T>) => void) {
     const next = new Set(set);
@@ -78,6 +94,20 @@ export function FindingsTable({ findings }: { findings: Finding[] }) {
         <Chip active={reachableOnly} onClick={() => setReachableOnly((v) => !v)}>
           reachable only
         </Chip>
+        {hasV3 ? (
+          <>
+            <Chip active={kevOnly} onClick={() => setKevOnly((v) => !v)}>
+              KEV only
+            </Chip>
+            <div className="flex flex-wrap gap-1.5">
+              {SSVC_TIERS.map((s) => (
+                <Chip key={s} active={ssvcs.has(s)} onClick={() => toggle(ssvcs, s, setSsvcs)}>
+                  {s}
+                </Chip>
+              ))}
+            </div>
+          </>
+        ) : null}
         <span className="ml-auto text-xs text-muted-foreground tabular-nums">
           {rows.length} of {findings.length}
         </span>
@@ -94,15 +124,16 @@ export function FindingsTable({ findings }: { findings: Finding[] }) {
                 <th className="px-4 py-2.5 font-medium">Resource</th>
                 <th className="px-4 py-2.5 font-medium">Source</th>
                 <th className="px-4 py-2.5 font-medium">Reachable</th>
+                {hasV3 ? <th className="px-4 py-2.5 font-medium">Intel</th> : null}
               </tr>
             </thead>
             <tbody>
               {rows.map((f) => (
-                <Row key={f.id} f={f} />
+                <Row key={f.id} f={f} showV3={hasV3} />
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  <td colSpan={hasV3 ? 7 : 6} className="px-4 py-10 text-center text-sm text-muted-foreground">
                     No findings match these filters.
                   </td>
                 </tr>
@@ -115,7 +146,7 @@ export function FindingsTable({ findings }: { findings: Finding[] }) {
   );
 }
 
-function Row({ f }: { f: Finding }) {
+function Row({ f, showV3 }: { f: Finding; showV3: boolean }) {
   const score = f.exploitScore ?? 0;
   return (
     <tr className="border-b transition-colors last:border-0 hover:bg-accent/40">
@@ -132,7 +163,9 @@ function Row({ f }: { f: Finding }) {
       </td>
       <td className="max-w-md px-4 py-3">
         <div className="font-medium leading-snug">{f.title}</div>
-        <div className="font-mono text-[11px] text-muted-foreground">{f.ruleId}</div>
+        <div className="font-mono text-[11px] text-muted-foreground">
+          {f.cve ?? f.ruleId}
+        </div>
       </td>
       <td className="px-4 py-3">
         <div className="text-sm">{f.resource.image ?? f.resource.name}</div>
@@ -147,6 +180,30 @@ function Row({ f }: { f: Finding }) {
       <td className="px-4 py-3">
         <ReachableBadge reachable={f.reachable} />
       </td>
+      {showV3 ? (
+        <td className="px-4 py-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            {f.ssvc ? <SsvcBadge decision={f.ssvc} /> : null}
+            {f.kev ? <KevBadge /> : null}
+            {f.ransomware ? <RansomwareBadge /> : null}
+            {typeof f.epss === 'number' ? <EpssChip epss={f.epss} /> : null}
+            {f.exposure ? (
+              <span className="font-mono text-[10px] uppercase text-muted-foreground">
+                {f.exposure}
+              </span>
+            ) : null}
+            {f.reaches && f.reaches.length ? (
+              <span
+                className="font-mono text-[10px] text-critical"
+                title={`Reaches crown jewels: ${f.reaches.join(', ')}`}
+              >
+                ⤳ {f.reaches.slice(0, 2).join(',')}
+                {f.reaches.length > 2 ? `+${f.reaches.length - 2}` : ''}
+              </span>
+            ) : null}
+          </div>
+        </td>
+      ) : null}
     </tr>
   );
 }

@@ -10,12 +10,17 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here — pnpm/action-setup@v4 refuses to be ambiguous when
+      # package.json already pins it via `packageManager`. The version comes
+      # from package.json (pnpm@11.3.0) which is also what `corepack` uses.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 11
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # pnpm@11.3.0 (pinned in package.json `packageManager`) requires
+          # Node ≥22.13. The agent image is built on Node 24, so 22 is the
+          # smallest viable runtime that matches both pnpm + the store's
+          # `node:sqlite` built-in.
+          node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm build

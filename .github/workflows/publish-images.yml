@@ -2,6 +2,9 @@ name: Publish agent image
 
 # Builds the in-cluster agent image and pushes it to GitHub Container Registry.
 # Runs on the GitHub runners (no local Docker needed) using the built-in token.
+#
+# Unified image: TS tunnel-client + Python ARGUS engine + bundled scanner
+# binaries (Trivy / kube-bench / Kubescape, versions pinned in the Dockerfile).
 
 on:
   push:
@@ -9,6 +12,10 @@ on:
     paths:
       - 'apps/api/**'
       - 'packages/**'
+      # ARGUS Python pipeline is baked into the image; a change here is also
+      # a supply-chain change to the published artifact and must rebuild.
+      - 'argus/**'
+      - 'requirements.txt'
       - 'pnpm-lock.yaml'
       - '.github/workflows/publish-images.yml'
     tags: ['v*']
@@ -38,8 +45,11 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/k8s-sentinel
+          # Keep `latest` floating on main; pin the chart-referenced tag
+          # `0.2.0-argus-v3` here so `helm install` finds it.
           tags: |
-            type=raw,value=0.1.0
+            type=raw,value=0.2.0-argus-v3
+            type=raw,value=argus-v3
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha,format=short
 

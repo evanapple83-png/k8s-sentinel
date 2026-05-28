@@ -5,13 +5,18 @@ import type {
   Account,
   AttackPath,
   AuditEntry,
+  ChokePoint,
   Cluster,
+  Confidence,
+  Exposure,
   Finding,
   Fix,
   Membership,
   Role,
   RunRecord,
   RunSnapshot,
+  SsvcDecision,
+  ThreatIntel,
 } from './types';
 
 /**
@@ -167,18 +172,21 @@ export async function getRunSnapshot(
     return null;
   }
 
-  const [{ data: findings }, { data: paths }, { data: fixes }] = await Promise.all([
+  const [{ data: findings }, { data: paths }, { data: fixes }, { data: chokes }] = await Promise.all([
     db.from('finding').select('*').eq('run_id', runId),
     db.from('attack_path').select('*').eq('run_id', runId),
     db.from('remediation').select('*').eq('run_id', runId).order('priority', { ascending: false }),
+    db.from('choke_point').select('*').eq('run_id', runId).order('priority', { ascending: false }),
   ]);
 
-  return {
+  const snap: RunSnapshot = {
     run: mapRun(run),
     findings: (findings ?? []).map(mapFinding),
     paths: (paths ?? []).map(mapPath),
     fixes: (fixes ?? []).map(mapFix),
   };
+  if (chokes && chokes.length) snap.chokePoints = chokes.map(mapChokePoint);
+  return snap;
 }
 
 /**
@@ -217,6 +225,11 @@ export async function ingestSnapshot(
       risk_score: snap.run.riskScore == null ? null : Math.round(snap.run.riskScore),
       summary: snap.run.summary,
       created_at: snap.run.startedAt,
+      // ARGUS v3 intel (legacy runs omit `snap.intel` → these stay null).
+      intel_source: snap.intel?.source ?? null,
+      intel_version: snap.intel?.version ?? null,
+      intel_kev_count: snap.intel?.kevCount ?? null,
+      intel_epss_count: snap.intel?.epssCount ?? null,
     },
     { onConflict: 'id' },
   );
@@ -227,6 +240,7 @@ export async function ingestSnapshot(
     db.from('finding').delete().eq('run_id', runId),
     db.from('attack_path').delete().eq('run_id', runId),
     db.from('remediation').delete().eq('run_id', runId),
+    db.from('choke_point').delete().eq('run_id', runId),
   ]);
 
   if (snap.findings.length) {
@@ -245,6 +259,16 @@ export async function ingestSnapshot(
         attack_path_id: f.attackPathId ?? null,
         controls: f.controls ?? null,
         base_score: f.baseScore ?? null,
+        // v3 — every column is nullable so a legacy agent (no v3 fields on
+        // the wire) keeps ingesting unchanged.
+        cve: f.cve ?? null,
+        kev: f.kev ?? null,
+        ransomware: f.ransomware ?? null,
+        epss: f.epss ?? null,
+        ssvc: f.ssvc ?? null,
+        confidence: f.confidence ?? null,
+        exposure: f.exposure ?? null,
+        reaches: f.reaches ?? [],
       })),
     );
     if (error) throw error;
@@ -260,6 +284,23 @@ export async function ingestSnapshot(
         entry_point: p.entryPoint ?? null,
         steps: p.steps,
         finding_ids: p.findingIds,
+      })),
+    );
+    if (error) throw error;
+  }
+
+  if (snap.chokePoints && snap.chokePoints.length) {
+    const { error } = await db.from('choke_point').insert(
+      snap.chokePoints.map((c) => ({
+        id: c.id,
+        run_id: runId,
+        control: c.control,
+        breaks: c.breaks,
+        total_paths: c.totalPaths,
+        targets: c.targets,
+        severity: c.severity,
+        description: c.description,
+        priority: Math.round(c.priority),
       })),
     );
     if (error) throw error;
@@ -492,6 +533,7 @@ function mapCluster(r: Record<string, unknown>): Cluster {
 }
 
 function mapRun(r: Record<string, unknown>): RunRecord {
+  const intel = mapIntel(r);
   return {
     id: r.id as string,
     clusterId: r.cluster_id as string,
@@ -503,10 +545,25 @@ function mapRun(r: Record<string, unknown>): RunRecord {
     pathCount: Number(r.path_count ?? 0),
     riskScore: r.risk_score == null ? null : Number(r.risk_score),
     summary: (r.summary as string) ?? null,
+    intel,
   };
 }
 
+function mapIntel(r: Record<string, unknown>): ThreatIntel | null {
+  const source = (r.intel_source as string | null) ?? null;
+  const version = (r.intel_version as string | null) ?? null;
+  if (!source && !version) return null;
+  const out: ThreatIntel = {
+    source: source ?? 'unknown',
+    version: version ?? '?',
+    kevCount: r.intel_kev_count == null ? 0 : Number(r.intel_kev_count),
+  };
+  if (r.intel_epss_count != null) out.epssCount = Number(r.intel_epss_count);
+  return out;
+}
+
 function mapFinding(r: Record<string, unknown>): Finding {
+  const reaches = Array.isArray(r.reaches) ? (r.reaches as string[]) : undefined;
   return {
     id: r.id as string,
     source: r.source as string,
@@ -520,6 +577,29 @@ function mapFinding(r: Record<string, unknown>): Finding {
     attackPathId: (r.attack_path_id as string) ?? undefined,
     controls: (r.controls as Finding['controls']) ?? undefined,
     baseScore: r.base_score == null ? undefined : Number(r.base_score),
+    // v3 — nullable columns; surface undefined when absent so callers can
+    // distinguish "engine didn't emit" from "engine emitted false/0".
+    cve: (r.cve as string | null) ?? undefined,
+    kev: r.kev == null ? undefined : Boolean(r.kev),
+    ransomware: r.ransomware == null ? undefined : Boolean(r.ransomware),
+    epss: r.epss == null ? undefined : Number(r.epss),
+    ssvc: (r.ssvc as SsvcDecision | null) ?? undefined,
+    confidence: (r.confidence as Confidence | null) ?? undefined,
+    exposure: (r.exposure as Exposure | null) ?? undefined,
+    reaches: reaches && reaches.length ? reaches : undefined,
+  };
+}
+
+function mapChokePoint(r: Record<string, unknown>): ChokePoint {
+  return {
+    id: r.id as string,
+    control: (r.control as ChokePoint['control']) ?? { type: 'unknown' },
+    breaks: Number(r.breaks ?? 0),
+    totalPaths: Number(r.total_paths ?? 0),
+    targets: Array.isArray(r.targets) ? (r.targets as string[]) : [],
+    severity: r.severity as ChokePoint['severity'],
+    description: (r.description as string) ?? '',
+    priority: Number(r.priority ?? 0),
   };
 }
 

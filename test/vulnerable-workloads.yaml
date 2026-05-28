@@ -1,0 +1,179 @@
+# ARGUS smoke fixtures — seed an obviously-vulnerable workload next to a
+# benign one so the engine has something to correlate into an attack path.
+#
+# Pairs with scripts/smoke.sh. Designed to be safe to apply to a kind cluster
+# only — the Secret data here is a base64-encoded placeholder, not a real
+# credential, and the workload images are pinned to known-vulnerable older
+# versions so Trivy produces real CVE rows.
+#
+#   kubectl apply -f test/vulnerable-workloads.yaml
+#
+# Resources created in namespace ``argus-smoke``:
+#   - ServiceAccount ``vuln-app`` + Role/RoleBinding granting get/list secrets
+#   - Secret ``db-credentials`` (placeholder data — never read by the scanner)
+#   - Deployment ``vulnerable-web`` (root, old nginx, exposed via Ingress)
+#   - Service + Ingress fronting it
+#   - Deployment ``benign-internal`` (nonroot, no RBAC, no exposure)
+#   - NetworkPolicy denying external ingress to the benign workload
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: argus-smoke
+  labels:
+    app.kubernetes.io/part-of: argus-smoke
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vuln-app
+  namespace: argus-smoke
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: secret-reader
+  namespace: argus-smoke
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: vuln-app-secret-reader
+  namespace: argus-smoke
+subjects:
+  - kind: ServiceAccount
+    name: vuln-app
+    namespace: argus-smoke
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: secret-reader
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-credentials
+  namespace: argus-smoke
+  labels:
+    argus-smoke: placeholder
+type: Opaque
+data:
+  # Placeholder values — base64("admin") / base64("not-a-real-password").
+  # ARGUS never reads .data; this only exists so the Secret object is present
+  # and the vuln-app SA has something to "be able to read".
+  username: YWRtaW4=
+  password: bm90LWEtcmVhbC1wYXNzd29yZA==
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vulnerable-web
+  namespace: argus-smoke
+  labels:
+    app: vulnerable-web
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vulnerable-web
+  template:
+    metadata:
+      labels:
+        app: vulnerable-web
+    spec:
+      serviceAccountName: vuln-app
+      containers:
+        - name: web
+          # Known-old nginx so Trivy emits real critical/high CVE rows. Pin
+          # the digest here once a stable smoke baseline is wanted.
+          image: nginx:1.14.0
+          ports:
+            - containerPort: 80
+          # Explicitly root + privilege escalation allowed, so the inventory
+          # collector reports runAsRoot=true and the engine boosts the score.
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vulnerable-web
+  namespace: argus-smoke
+spec:
+  selector:
+    app: vulnerable-web
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: vulnerable-web
+  namespace: argus-smoke
+spec:
+  rules:
+    - host: vulnerable.smoke.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: vulnerable-web
+                port:
+                  number: 80
+---
+# Benign internal workload — hardened, no special RBAC, no exposure. The
+# engine should rank its findings (if any) well below the vulnerable one.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: benign-internal
+  namespace: argus-smoke
+  labels:
+    app: benign-internal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: benign-internal
+  template:
+    metadata:
+      labels:
+        app: benign-internal
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: app
+          image: nginx:1.27.0       # current; minimal/no CVE rows expected
+          ports:
+            - containerPort: 80
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+# Matches the engine's deny-external check (policyTypes=[Ingress], no
+# ingress rules => deny all inbound). This is the same shape the PoC's
+# accepted-risk policy verifies against.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: benign-internal-deny-external
+  namespace: argus-smoke
+spec:
+  podSelector:
+    matchLabels:
+      app: benign-internal
+  policyTypes:
+    - Ingress

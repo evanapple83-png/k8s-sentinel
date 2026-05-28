@@ -16,6 +16,9 @@ const Str = (max = 4096) => z.string().max(max);
 const ShortStr = (max = 256) => z.string().max(max);
 
 const Severity = z.enum(['critical', 'high', 'medium', 'low', 'info']);
+const SsvcDecision = z.enum(['Act', 'Attend', 'Track', 'Track*']);
+const Confidence = z.enum(['high', 'medium', 'n/a']);
+const Exposure = z.enum(['open', 'internal', 'small', 'cluster']);
 
 const ResourceRef = z.object({
   kind: ShortStr(),
@@ -40,6 +43,42 @@ const WireFinding = z.object({
   attackPathId: ShortStr().optional(),
   controls: z.array(ControlRef).max(64).optional(),
   baseScore: z.number().finite().optional(),
+  // v3 attack-graph fields (all optional; legacy agents omit)
+  cve: ShortStr(64).optional(),
+  kev: z.boolean().optional(),
+  ransomware: z.boolean().optional(),
+  epss: z.number().min(0).max(1).optional(),
+  ssvc: SsvcDecision.optional(),
+  confidence: Confidence.optional(),
+  exposure: Exposure.optional(),
+  reaches: z.array(ShortStr(64)).max(32).optional(),
+});
+
+const ChokeControl = z.object({
+  type: ShortStr(64),
+  ref: ShortStr(128).optional(),
+  workload: ShortStr(256).optional(),
+  sa: ShortStr(256).optional(),
+  what: ShortStr(128).optional(),
+  role: ShortStr(256).optional(),
+});
+
+const WireChokePoint = z.object({
+  id: ShortStr(),
+  control: ChokeControl,
+  breaks: z.number().int().nonnegative(),
+  totalPaths: z.number().int().nonnegative(),
+  targets: z.array(ShortStr(256)).max(64),
+  severity: Severity,
+  description: Str(4096),
+  priority: z.number().finite(),
+});
+
+const WireThreatIntel = z.object({
+  source: ShortStr(64),
+  version: ShortStr(64),
+  kevCount: z.number().int().nonnegative(),
+  epssCount: z.number().int().nonnegative().optional(),
 });
 
 const WireAttackPath = z.object({
@@ -107,6 +146,9 @@ export const PostureSnapshotSchema = z.object({
   paths: z.array(WireAttackPath).max(2000),
   remediations: z.array(WireRemediation).max(2000),
   audit: z.array(WireAuditEntry).max(20000),
+  // v3 (optional; agents pre-ARGUS omit). Mirrors relay-protocol.
+  intel: WireThreatIntel.optional(),
+  chokePoints: z.array(WireChokePoint).max(256).optional(),
 });
 
 export type PostureSnapshot = z.infer<typeof PostureSnapshotSchema>;

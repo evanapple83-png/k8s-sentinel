@@ -10,6 +10,11 @@ automountServiceAccountToken: true
 # Read-only ClusterRole. By design this grants ONLY get/list/watch. The agent
 # never needs write; remediation is emitted as PRs for human approval, never
 # applied in-cluster (BUILD.md §10). Do not add create/update/patch/delete here.
+#
+# CRITICAL: NO secrets verbs anywhere. The v3 ARGUS engine derives Secret
+# *reachability* from RBAC + pod volume mounts; it never lists Secret names
+# and never reads .data. Anything that broadens this is a regression on
+# DATA-BOUNDARY.md and must be reviewed as such.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -30,12 +35,6 @@ rules:
       - persistentvolumeclaims
       - replicationcontrollers
     verbs: ["get", "list", "watch"]
-  # NOTE: Secrets are intentionally limited to metadata-level discovery, not
-  # data reads. The Analyst reasons about *reachability* of secrets, never
-  # their contents.
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["list"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
     verbs: ["get", "list", "watch"]

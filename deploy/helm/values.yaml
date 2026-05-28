@@ -5,7 +5,10 @@ fullnameOverride: ""
 
 image:
   repository: ghcr.io/evanapple83-png/k8s-sentinel
-  tag: "0.1.0"
+  # Unified image: TS tunnel-client + Python ARGUS + Trivy/kube-bench/Kubescape.
+  # Bump in lockstep with Chart.appVersion. Pinned scanner versions live in the
+  # Dockerfile (apps/api/Dockerfile, TRIVY_VERSION/KUBE_BENCH_VERSION/…).
+  tag: "0.2.0-argus-v3"
   pullPolicy: IfNotPresent
 
 # --- Deployment mode -------------------------------------------------------
@@ -26,6 +29,22 @@ relay:
   # Optional mTLS client material: an existing Secret carrying tls.crt / tls.key
   # (per-cluster client cert) and ca.crt (relay/CA bundle to trust).
   clientCertSecret: ""
+
+# --- ARGUS v3 scanner ------------------------------------------------------
+# When the agent receives a `scan` command over the relay, it shells out to the
+# Python ARGUS pipeline (default) or falls back to the legacy TS orchestrator.
+# Production should leave this on "argus"; "builtin" exists for emergency
+# rollback or A/B comparison.
+argus:
+  scanner: argus        # "argus" | "builtin"
+  imagesOnly: false     # skip kube-bench + Kubescape (image CVEs only)
+  noNetwork: false      # use cached CISA-KEV + override file (no live fetch)
+  # GitOps-style accepted-risk policies: drop *.md waiver files into a
+  # ConfigMap and reference it here. The agent mounts it read-only at
+  # /etc/sentinel/accepted-risks and passes --accepted-risks to ARGUS.
+  acceptedRisks:
+    enabled: false
+    configMapName: ""   # e.g. "sentinel-accepted-risks"
 
 # --- Engine ----------------------------------------------------------------
 engine:

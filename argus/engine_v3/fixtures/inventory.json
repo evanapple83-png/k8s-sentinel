@@ -1,0 +1,27 @@
+{
+  "cluster":"prod-eu-1","scannedAt":"2026-05-28T09:14:00Z",
+  "workloads":[
+    {"id":"payments/invoice-api","namespace":"payments","running":true,"image":"acme/invoice-api:1.2.3","serviceAccount":"payments/invoice-sa","node":"node-1","runAsRoot":true,"privileged":false,"hostPath":[],"hostPID":false,"capabilities":[],"exposedVia":["ingress:invoice.acme.com"]},
+    {"id":"batch/report-worker","namespace":"batch","running":false,"image":"acme/invoice-api:1.2.3","serviceAccount":"batch/default","node":"node-2","runAsRoot":true,"privileged":false,"hostPath":[],"hostPID":false,"capabilities":[],"exposedVia":[]},
+    {"id":"payments/cache","namespace":"payments","running":true,"image":"redis:7.2.0","serviceAccount":"payments/default","node":"node-2","runAsRoot":false,"privileged":false,"hostPath":[],"hostPID":false,"capabilities":[],"exposedVia":[]},
+    {"id":"ci/runner","namespace":"ci","running":true,"image":"acme/ci-runner:4.0","serviceAccount":"ci/ci-deployer","node":"node-2","runAsRoot":false,"privileged":false,"hostPath":[],"hostPID":false,"capabilities":[],"exposedVia":[]},
+    {"id":"platform/legacy-agent","namespace":"platform","running":true,"image":"acme/legacy-agent:0.9","serviceAccount":"platform/legacy-sa","node":"node-1","runAsRoot":true,"privileged":true,"hostPath":["/"],"hostPID":true,"capabilities":["SYS_ADMIN"],"exposedVia":[]}
+  ],
+  "serviceAccounts":[
+    {"id":"payments/invoice-sa","rules":[{"verbs":["get","list"],"resources":["secrets"],"scope":"payments"}],"cloudIdentity":"arn:aws:iam::1234:role/invoice-s3-rw"},
+    {"id":"ci/ci-deployer","rules":[{"verbs":["create"],"resources":["pods"],"scope":"*"},{"verbs":["create"],"resources":["pods/exec"],"scope":"*"}],"cloudIdentity":null},
+    {"id":"platform/legacy-sa","rules":[],"cloudIdentity":null},
+    {"id":"batch/default","rules":[],"cloudIdentity":null},
+    {"id":"payments/default","rules":[],"cloudIdentity":null}
+  ],
+  "cloudRoles":[
+    {"arn":"arn:aws:iam::1234:role/invoice-s3-rw","permissions":["s3:GetObject:prod-data"],"canAssume":["arn:aws:iam::1234:role/org-admin"],"admin":false},
+    {"arn":"arn:aws:iam::1234:role/org-admin","permissions":["*:*"],"canAssume":[],"admin":true}
+  ],
+  "secrets":[
+    {"id":"payments/db-credentials","namespace":"payments","sensitivity":"high"},
+    {"id":"ci/registry-token","namespace":"ci","sensitivity":"high"}
+  ],
+  "nodes":[{"id":"node-1"},{"id":"node-2"}],
+  "networkPolicies":[{"namespace":"payments","appliesTo":"cache","mode":"deny-external"}]
+}

@@ -3,7 +3,7 @@ import { ArrowUpRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { RiskRing, rating } from '@/components/risk-ring';
-import { Stat, Bar } from '@/components/bits';
+import { Stat, Bar, IntelBanner, ChokePointsPanel } from '@/components/bits';
 import { EmptyState } from '@/components/placeholder';
 import type { Severity } from '@/lib/types';
 import { getActiveData, type SearchParamsInput } from '@/lib/active';
@@ -64,6 +64,9 @@ export default async function OverviewPage({
   const reachable = findings.filter((f) => f.reachable).length;
   const critical = findings.filter((f) => f.severity === 'critical').length;
   const high = findings.filter((f) => f.severity === 'high').length;
+  const kevCount = findings.filter((f) => f.kev === true).length;
+  const actCount = findings.filter((f) => f.ssvc === 'Act').length;
+  const chokePoints = data.snapshot.chokePoints ?? [];
 
   // Delta vs. the previous run: from the demo prev-run, or the next run in the
   // (newest-first) live list.
@@ -86,6 +89,8 @@ export default async function OverviewPage({
         <Button>Run scan</Button>
       </header>
 
+      <IntelBanner intel={run.intel} />
+
       <div className="grid gap-5 lg:grid-cols-[300px_1fr]">
         <Card className="flex flex-col items-center justify-center gap-4 p-8">
           <RiskRing value={risk} />
@@ -100,9 +105,20 @@ export default async function OverviewPage({
         </Card>
 
         <div className="space-y-5">
-          <div className="grid gap-4 sm:grid-cols-3">
+          <div className="grid gap-4 sm:grid-cols-4">
             <Stat label="Critical" value={critical} tone="critical" hint="needs action now" />
-            <Stat label="High" value={high} tone="warn" />
+            <Stat
+              label="KEV"
+              value={kevCount}
+              tone={kevCount > 0 ? 'critical' : 'default'}
+              hint="known-exploited"
+            />
+            <Stat
+              label="SSVC Act"
+              value={actCount}
+              tone={actCount > 0 ? 'critical' : 'default'}
+              hint="reaches a jewel"
+            />
             <Stat
               label="Reachable"
               value={reachable}
@@ -127,6 +143,8 @@ export default async function OverviewPage({
           </Card>
         </div>
       </div>
+
+      <ChokePointsPanel chokePoints={chokePoints} />
 
       <div className="grid gap-5 lg:grid-cols-2">
         <Card>

@@ -1,0 +1,80 @@
+# ARGUS — scheduled scan CronJob.
+#
+# Runs argus scan daily at 03:00 UTC. Same hardening as deploy/job.yaml.
+# Apply once: kubectl apply -f deploy/cronjob.yaml -n argus-system
+#
+# Each successful run leaves report.md + report.json in the pod's emptyDir.
+# In production wire a sidecar / log shipper / object-storage upload step to
+# persist them externally — keeping it out of this manifest so the read-only
+# guarantee is obvious from a single ``kubectl get -o yaml``.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: argus-scan
+  namespace: argus-system
+  labels:
+    app.kubernetes.io/name: argus
+    app.kubernetes.io/component: scheduled-scan
+    app.kubernetes.io/part-of: argus
+spec:
+  schedule: "0 3 * * *"
+  timeZone: "Etc/UTC"
+  concurrencyPolicy: Forbid          # never overlap runs
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: argus
+            app.kubernetes.io/component: scheduled-scan
+        spec:
+          serviceAccountName: argus
+          automountServiceAccountToken: true
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: argus
+              image: ghcr.io/your-org/argus:latest
+              imagePullPolicy: IfNotPresent
+              args:
+                - scan
+                - --in-cluster
+                - --cluster-name=$(CLUSTER_NAME)
+                - --out=/var/argus/out
+              env:
+                - name: CLUSTER_NAME
+                  value: "kubernetes"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: 1000m
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                runAsNonRoot: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: out
+                  mountPath: /var/argus/out
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: out
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}

@@ -12,6 +12,8 @@ export interface SentinelConfig {
   dbPath: string;
   apiPort: number;
   kubeconfig?: string;
+  /** Cluster name carried in the posture report's run summary. CLUSTER_NAME env. */
+  clusterName?: string;
 }
 
 function env(key: string, fallback?: string): string | undefined {
@@ -51,5 +53,6 @@ export function loadConfig(): SentinelConfig {
     dbPath: env('SENTINEL_DB_PATH', './data/sentinel.sqlite')!,
     apiPort: Number(env('API_PORT', '8787')),
     kubeconfig: env('KUBECONFIG'),
+    clusterName: env('CLUSTER_NAME'),
   };
 }

@@ -1,14 +1,21 @@
 apiVersion: v2
 name: k8s-sentinel
-description: Autonomous, self-hosted AI security agent for Kubernetes (read-only by default).
+description: |
+  Autonomous, self-hosted AI security agent for Kubernetes (read-only by default).
+  Ships the v3 ARGUS attack-graph engine (CISA-KEV-aware) bundled with Trivy,
+  kube-bench and Kubescape; correlates findings into ranked attack paths +
+  choke-points and streams a normalized PostureSnapshot to the hosted control
+  plane (hybrid mode) or serves locally (cluster-local mode).
 type: application
-version: 0.1.0
-appVersion: "0.1.0"
+version: 0.2.0
+appVersion: "0.2.0-argus-v3"
 keywords:
   - security
   - kubernetes
   - posture
+  - attack-graph
+  - cisa-kev
   - ai-agent
-home: https://github.com/your-org/k8s-sentinel
+home: https://github.com/evanapple83-png/k8s-sentinel
 sources:
-  - https://github.com/your-org/k8s-sentinel
+  - https://github.com/evanapple83-png/k8s-sentinel
