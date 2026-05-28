@@ -18,7 +18,11 @@
 # Pin scanner versions explicitly so re-builds are reproducible. Every bump is
 # a supply-chain decision.
 ARG NODE_VERSION=24-alpine
-ARG TRIVY_VERSION=0.55.2
+# Verified against the GitHub Releases API on 28 mei 2026. Trivy 0.55.x
+# never shipped (the project jumped 0.26 → 0.69 → 0.70); 0.70.0 is the
+# current stable. kube-bench 0.7.3 + Kubescape 3.0.20 are LTS-stable; bump
+# them deliberately, not as a side-effect.
+ARG TRIVY_VERSION=0.70.0
 ARG KUBE_BENCH_VERSION=0.7.3
 ARG KUBESCAPE_VERSION=3.0.20
 
