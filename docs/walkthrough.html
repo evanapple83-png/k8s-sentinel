@@ -1,0 +1,876 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>K8s Sentinel — A walkthrough</title>
+<style>
+  /* --------------------------------------------------------------------- */
+  /*  Apple-language print sheet.                                          */
+  /*  - SF Pro / system stack, never a webfont (PDF must travel offline).  */
+  /*  - Generous whitespace, refined hierarchy, no decoration for its own  */
+  /*    sake. Colour is a thin accent, never the substance.                */
+  /* --------------------------------------------------------------------- */
+  :root {
+    --ink:        #1d1d1f;
+    --ink-soft:   #424245;
+    --ink-mute:   #6e6e73;
+    --hairline:   #d2d2d7;
+    --paper:      #ffffff;
+    --paper-tint: #f5f5f7;
+    --accent:     #0071e3;          /* Apple blue */
+    --critical:   #bf4800;          /* warmer than red; less scary */
+    --good:       #1d7a3f;
+    --mono:       ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @page {
+    size: A4;
+    margin: 22mm 18mm;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    font-family: -apple-system, "SF Pro Text", "SF Pro Display", system-ui,
+                 BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--paper);
+    font-size: 11.5pt;
+    line-height: 1.55;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* --------------------------------------------------------------------- */
+  /*  Page utility                                                         */
+  /* --------------------------------------------------------------------- */
+  .page {
+    page-break-after: always;
+    padding: 0;
+  }
+  .page:last-child { page-break-after: auto; }
+  /* --------------------------------------------------------------------- */
+  /*  Cover                                                                */
+  /* --------------------------------------------------------------------- */
+  .cover {
+    min-height: 240mm;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    padding-left: 6mm;
+  }
+  .eyebrow {
+    text-transform: uppercase;
+    font-size: 9.5pt;
+    letter-spacing: 0.18em;
+    color: var(--ink-mute);
+    font-weight: 600;
+    margin-bottom: 14mm;
+  }
+  .cover h1 {
+    font-size: 56pt;
+    font-weight: 700;
+    line-height: 1.02;
+    letter-spacing: -0.025em;
+    margin: 0 0 10mm 0;
+    color: var(--ink);
+  }
+  .cover h1 .accent {
+    display: block;
+    background: linear-gradient(120deg, #0071e3 0%, #00c4ff 60%, #5e5ce6 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .cover .lede {
+    font-size: 18pt;
+    line-height: 1.35;
+    color: var(--ink-soft);
+    font-weight: 400;
+    max-width: 150mm;
+    margin: 0 0 24mm 0;
+  }
+  .cover .meta {
+    display: flex;
+    gap: 14mm;
+    font-size: 9.5pt;
+    color: var(--ink-mute);
+    border-top: 1px solid var(--hairline);
+    padding-top: 5mm;
+    margin-top: auto;
+  }
+  .cover .meta b { color: var(--ink); font-weight: 600; }
+  /* --------------------------------------------------------------------- */
+  /*  Section pages                                                        */
+  /* --------------------------------------------------------------------- */
+  h2 {
+    font-size: 28pt;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin: 0 0 4mm 0;
+  }
+  h2 .num {
+    color: var(--ink-mute);
+    font-weight: 400;
+    margin-right: 8mm;
+  }
+  h3 {
+    font-size: 14pt;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 9mm 0 3mm 0;
+    color: var(--ink);
+  }
+  h4 {
+    font-size: 11pt;
+    font-weight: 600;
+    color: var(--ink);
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin: 6mm 0 2mm 0;
+  }
+  p { margin: 0 0 4mm 0; }
+  .lede {
+    font-size: 13pt;
+    line-height: 1.45;
+    color: var(--ink-soft);
+    max-width: 165mm;
+    margin-bottom: 8mm;
+  }
+  .rule {
+    height: 1px;
+    background: var(--hairline);
+    margin: 6mm 0 8mm 0;
+    border: 0;
+  }
+  /* --------------------------------------------------------------------- */
+  /*  Cards / tiles                                                        */
+  /* --------------------------------------------------------------------- */
+  .tiles {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6mm;
+    margin: 6mm 0;
+  }
+  .tile {
+    background: var(--paper-tint);
+    border-radius: 14px;
+    padding: 7mm 7mm;
+    page-break-inside: avoid;
+  }
+  .tile .icon {
+    width: 9mm;
+    height: 9mm;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 11pt;
+    margin-bottom: 4mm;
+  }
+  .tile .icon.warm    { background: var(--critical); }
+  .tile .icon.good    { background: var(--good); }
+  .tile .icon.violet  { background: #5e5ce6; }
+  .tile .icon.teal    { background: #008794; }
+  .tile h4 {
+    text-transform: none;
+    letter-spacing: -0.005em;
+    font-size: 13pt;
+    margin: 0 0 2mm 0;
+  }
+  .tile p {
+    font-size: 10.5pt;
+    color: var(--ink-soft);
+    margin: 0;
+    line-height: 1.45;
+  }
+  /* --------------------------------------------------------------------- */
+  /*  Two-column hero                                                       */
+  /* --------------------------------------------------------------------- */
+  .split {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10mm;
+    margin: 6mm 0;
+    page-break-inside: avoid;
+  }
+  .split h3 { margin-top: 0; }
+  /* --------------------------------------------------------------------- */
+  /*  Steps                                                                 */
+  /* --------------------------------------------------------------------- */
+  ol.steps {
+    list-style: none;
+    counter-reset: step;
+    padding: 0;
+    margin: 4mm 0 6mm 0;
+  }
+  ol.steps li {
+    counter-increment: step;
+    position: relative;
+    padding-left: 11mm;
+    margin-bottom: 5mm;
+    font-size: 11pt;
+    line-height: 1.5;
+    color: var(--ink-soft);
+  }
+  ol.steps li::before {
+    content: counter(step);
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 7mm;
+    height: 7mm;
+    border-radius: 50%;
+    background: var(--ink);
+    color: var(--paper);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    font-size: 9.5pt;
+  }
+  ol.steps li b { color: var(--ink); }
+  /* --------------------------------------------------------------------- */
+  /*  Code                                                                  */
+  /* --------------------------------------------------------------------- */
+  code, pre {
+    font-family: var(--mono);
+  }
+  code {
+    background: var(--paper-tint);
+    color: var(--ink);
+    padding: 0.5mm 1.5mm;
+    border-radius: 3px;
+    font-size: 9.5pt;
+  }
+  pre {
+    background: #f0f0f3;
+    color: var(--ink);
+    padding: 5mm 6mm;
+    border-radius: 10px;
+    overflow-x: auto;
+    font-size: 9.5pt;
+    line-height: 1.55;
+    margin: 4mm 0 6mm 0;
+    page-break-inside: avoid;
+    border-left: 3px solid var(--accent);
+  }
+  pre.warm { border-left-color: var(--critical); }
+  /* --------------------------------------------------------------------- */
+  /*  Pull quote                                                            */
+  /* --------------------------------------------------------------------- */
+  blockquote {
+    margin: 8mm 0;
+    padding: 0 0 0 6mm;
+    border-left: 3px solid var(--accent);
+    font-size: 13pt;
+    line-height: 1.4;
+    color: var(--ink-soft);
+    font-weight: 500;
+    page-break-inside: avoid;
+  }
+  /* --------------------------------------------------------------------- */
+  /*  Spec table                                                            */
+  /* --------------------------------------------------------------------- */
+  table.spec {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 5mm 0;
+    font-size: 10.5pt;
+  }
+  table.spec th, table.spec td {
+    text-align: left;
+    padding: 3mm 4mm;
+    border-bottom: 1px solid var(--hairline);
+    vertical-align: top;
+  }
+  table.spec th {
+    color: var(--ink-mute);
+    font-weight: 600;
+    font-size: 9pt;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  table.spec td.t { font-weight: 600; width: 36%; color: var(--ink); }
+  /* --------------------------------------------------------------------- */
+  /*  Foot                                                                  */
+  /* --------------------------------------------------------------------- */
+  .foot {
+    margin-top: 12mm;
+    padding-top: 5mm;
+    border-top: 1px solid var(--hairline);
+    color: var(--ink-mute);
+    font-size: 9.5pt;
+    display: flex;
+    justify-content: space-between;
+  }
+  /* Misc */
+  .em { color: var(--accent); font-weight: 600; }
+  .strike-fear {
+    background: linear-gradient(180deg, transparent 62%, rgba(0,113,227,0.12) 62%);
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!--  Cover                                                       -->
+<!-- ============================================================ -->
+<section class="page cover">
+  <div class="eyebrow">A walkthrough · 28 May 2026</div>
+  <h1>
+    See what an attacker
+    <span class="accent">would do next.</span>
+  </h1>
+  <p class="lede">
+    K8s Sentinel scans your Kubernetes cluster the way an attacker would think
+    about it — not as a flat list of CVEs, but as a graph of paths. It tells
+    you which single fix breaks the most ways in. It never touches your
+    cluster.
+  </p>
+  <div class="meta">
+    <div><b>Version</b><br/>0.2.0&nbsp;·&nbsp;ARGUS v3</div>
+    <div><b>Status</b><br/>Live in production</div>
+    <div><b>Dashboard</b><br/>control-plane-azure.vercel.app</div>
+    <div><b>Source</b><br/>github.com/evanapple83-png/k8s-sentinel</div>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  Page 2 — What it is                                         -->
+<!-- ============================================================ -->
+<section class="page">
+  <h2><span class="num">01</span>What it does</h2>
+  <p class="lede">
+    Three things, in plain English.
+  </p>
+  <div class="tiles">
+    <div class="tile">
+      <div class="icon">→</div>
+      <h4>Maps the attack surface</h4>
+      <p>
+        Every workload, service account and exposure path in your cluster gets
+        drawn into a single graph: who can reach what, and how.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon warm">!</div>
+      <h4>Ranks what to fix first</h4>
+      <p>
+        A finding only matters if an attacker can <em>reach</em> it. We score by
+        reachability — not raw CVSS — and surface the one or two fixes that
+        collapse the most paths.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon good">✓</div>
+      <h4>Proposes, never applies</h4>
+      <p>
+        Fixes ship as reviewable pull-request bundles for your repo. Sentinel
+        has read-only credentials, by construction.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon violet">~</div>
+      <h4>Speaks plain language</h4>
+      <p>
+        Ask <em>"show everything internet-exposed running as root"</em> in the
+        dashboard and get the answer in one sentence and a link.
+      </p>
+    </div>
+  </div>
+
+  <h3>How it's different</h3>
+  <p>
+    Most scanners give you a list of CVEs sorted by severity. That list lies.
+    A "critical" vulnerability on a workload no one can reach is noise; a
+    "medium" on the internet-exposed payment API with a service account that
+    can read every Secret in the cluster is a fire. Sentinel knows the
+    difference because it builds the graph first and scores second.
+  </p>
+  <blockquote>
+    The headline isn't <em>"you have 412 vulnerabilities."</em><br/>
+    It's <em>"apply this one patch and 4 of 4 active attack paths collapse."</em>
+  </blockquote>
+
+  <div class="foot">
+    <span>K8s Sentinel · Walkthrough</span>
+    <span>01 · What it does</span>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  Page 3 — The dashboard                                       -->
+<!-- ============================================================ -->
+<section class="page">
+  <h2><span class="num">02</span>The dashboard</h2>
+  <p class="lede">
+    Six screens. Each one answers a question you already had.
+  </p>
+
+  <table class="spec">
+    <thead><tr><th>Screen</th><th>The question it answers</th></tr></thead>
+    <tbody>
+      <tr>
+        <td class="t">Overview</td>
+        <td>How bad is it today, and what should I do first?</td>
+      </tr>
+      <tr>
+        <td class="t">Findings</td>
+        <td>Which vulnerabilities actually matter — and why?</td>
+      </tr>
+      <tr>
+        <td class="t">Attack Paths</td>
+        <td>If an attacker got in here, where would they end up?</td>
+      </tr>
+      <tr>
+        <td class="t">Ask</td>
+        <td>Anything else. Type a question, get a sentence.</td>
+      </tr>
+      <tr>
+        <td class="t">Report</td>
+        <td>Give me the audit-ready PDF / MD / JSON.</td>
+      </tr>
+      <tr>
+        <td class="t">Fixes</td>
+        <td>What can I approve right now? (One click → PR bundle.)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>On the Overview, four numbers</h3>
+  <p>
+    <span class="em">Critical</span> · <span class="em">KEV</span> ·
+    <span class="em">SSVC&nbsp;Act</span> · <span class="em">Reachable</span>.
+    The first one is the count of "high severity" issues — useful, but it's
+    just the loudest number. The other three are what you actually act on.
+  </p>
+  <div class="tiles">
+    <div class="tile">
+      <h4>KEV</h4>
+      <p>
+        Listed in CISA's Known-Exploited Vulnerabilities catalogue. Someone,
+        somewhere, is using this in the wild today. Patch on sight.
+      </p>
+    </div>
+    <div class="tile">
+      <h4>SSVC Act</h4>
+      <p>
+        The vulnerability is being exploited <em>and</em> reaches a crown jewel
+        in your cluster (a Secret, cluster-admin, a cloud identity). The
+        smallest, scariest, most useful pile.
+      </p>
+    </div>
+    <div class="tile">
+      <h4>Reachable</h4>
+      <p>
+        At least one path exists from the public internet — or from a less-
+        trusted namespace — to this finding. If it's not reachable, it's
+        noise.
+      </p>
+    </div>
+    <div class="tile">
+      <h4>"Apply first" panel</h4>
+      <p>
+        A short, ranked list of single controls that break the most paths.
+        Usually it's two or three items, and usually number one is a patch.
+      </p>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span>K8s Sentinel · Walkthrough</span>
+    <span>02 · The dashboard</span>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  Page 4 — Connect a cluster                                   -->
+<!-- ============================================================ -->
+<section class="page">
+  <h2><span class="num">03</span>Connect a cluster</h2>
+  <p class="lede">
+    Two methods. Both end at the same dashboard. Pick whichever fits your
+    week, not your beliefs.
+  </p>
+
+  <div class="split">
+    <div>
+      <h3>Helm install</h3>
+      <p style="color:var(--ink-soft); font-size:11pt;">
+        Best for clusters you'll keep scanning. The agent runs <em>inside</em>
+        your cluster and dials out to our relay — no inbound port, no firewall
+        hole, works behind air-gap.
+      </p>
+      <ol class="steps">
+        <li><b>Mint a token</b> in the dashboard's Connect screen.</li>
+        <li><b>Run one Helm command</b> on a host with cluster-admin.</li>
+        <li><b>Wait fifteen seconds.</b> The page flips to <em>connected.</em></li>
+      </ol>
+    </div>
+    <div>
+      <h3>Public key</h3>
+      <p style="color:var(--ink-soft); font-size:11pt;">
+        Best for a quick first look, or admins who don't want to deploy an
+        agent. Your cluster signs a short-lived, read-only certificate it
+        explicitly approves. The private key never leaves your machine.
+      </p>
+      <ol class="steps">
+        <li><b>Mint a token</b>, same as Helm.</li>
+        <li><b>Run one CLI command</b>: keypair + CSR happen locally.</li>
+        <li><b>Approve the certificate</b> with the exact <code>kubectl</code> line we print for you. The page flips to <em>connected.</em></li>
+      </ol>
+    </div>
+  </div>
+
+  <h3>The Helm one-liner</h3>
+<pre>helm install sentinel deploy/helm \
+  --namespace sentinel --create-namespace \
+  --set mode=hybrid \
+  --set relay.url=wss://k8s-sentinel-relay.fly.dev \
+  --set relay.installTokenSecret=sentinel-install</pre>
+
+  <h3>The Public-key one-liner</h3>
+<pre>python3 -m argus.cli bootstrap csr \
+  --enroll ent_&lt;token-from-UI&gt; \
+  --control-plane https://control-plane-azure.vercel.app \
+  --auto-approve --cleanup    <span style="color:var(--ink-mute);"># auto-approve only on kind/dev</span></pre>
+
+  <blockquote>
+    Neither method ever sees your <code>kubeconfig</code>. Helm uses an
+    in-cluster service-account token. Public-key uses a fresh certificate that
+    expires in one hour by default. Your real admin credentials stay where they
+    are.
+  </blockquote>
+
+  <div class="foot">
+    <span>K8s Sentinel · Walkthrough</span>
+    <span>03 · Connect a cluster</span>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  Page 5 — Under the hood (light)                              -->
+<!-- ============================================================ -->
+<section class="page">
+  <h2><span class="num">04</span>What scans your cluster</h2>
+  <p class="lede">
+    The agent runs four open-source scanners in parallel, then feeds them
+    into one engine that thinks about <em>reachability</em>.
+  </p>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="icon teal">T</div>
+      <h4>Trivy</h4>
+      <p>
+        Looks inside every container image for known CVEs. We pin
+        <code>0.70.0</code> — bumps are deliberate supply-chain decisions, not
+        accidents.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon teal">K</div>
+      <h4>Kubescape</h4>
+      <p>
+        Checks your manifests against NSA-CISA and MITRE frameworks. Catches
+        the configuration mistakes that turn a CVE into a breach.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon teal">B</div>
+      <h4>kube-bench</h4>
+      <p>
+        Runs the CIS Kubernetes Benchmark against your control plane and nodes.
+        Boring, essential, exactly what your auditor will ask about.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon teal">F</div>
+      <h4>Falco</h4>
+      <p>
+        Watches runtime behaviour — a shell opening in production, a process
+        reading <code>/etc/shadow</code>. Optional and additive.
+      </p>
+    </div>
+  </div>
+
+  <h3>And one engine on top: ARGUS v3</h3>
+  <p>
+    The scanners are commodity. The interesting bit is what we do with their
+    output. ARGUS pulls down the live <span class="em">CISA Known-Exploited
+    Vulnerabilities</span> catalogue at scan time, fuses every finding with
+    your live RBAC, exposed services, network policies and pod volume mounts,
+    and produces a single attack graph.
+  </p>
+  <p>
+    Each path in that graph is then scored with the
+    <span class="em">SSVC</span> decision model — the same one CISA's own
+    coordinators use:
+  </p>
+  <table class="spec">
+    <thead><tr><th>SSVC tier</th><th>Plain English</th></tr></thead>
+    <tbody>
+      <tr><td class="t">Act</td><td>Exploited <em>and</em> reaches a crown jewel today. Drop everything.</td></tr>
+      <tr><td class="t">Attend</td><td>Exploited, but the path is interrupted by an existing control. Plan a sprint.</td></tr>
+      <tr><td class="t">Track</td><td>Watched but quiet. Stay informed; no rush.</td></tr>
+      <tr><td class="t">Track*</td><td>No reachable impact. Inventory only.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    The dashboard's filters mirror this — <em>SSVC&nbsp;Act</em> is one click,
+    and that's where you start.
+  </p>
+
+  <div class="foot">
+    <span>K8s Sentinel · Walkthrough</span>
+    <span>04 · What scans your cluster</span>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  Page 6 — Apply first (choke-points)                          -->
+<!-- ============================================================ -->
+<section class="page">
+  <h2><span class="num">05</span>Apply this first</h2>
+  <p class="lede">
+    The single best feature: telling you which one fix breaks the most ways in.
+  </p>
+
+  <p>
+    Every attack path the engine finds is a chain — usually four or five steps
+    long. Most steps have a control that, if applied, breaks the chain. ARGUS
+    counts: <em>"if you applied this one control, how many active paths would
+    collapse?"</em> The "Apply first" card on the Overview is just that list,
+    sorted descending.
+  </p>
+
+  <h3>A real example, redacted</h3>
+  <blockquote>
+    <b>Patch CVE-2026-31337 on prod/invoice-api</b> &nbsp;·&nbsp;
+    breaks 4 of 4 active paths.
+    <br/><br/>
+    Eliminates → secret:payments/db-credentials · secret:ci/registry-token ·
+    CLUSTER-ADMIN · CLOUD-ADMIN
+  </blockquote>
+  <p>
+    One patch on one workload, and four crown-jewel access paths close. You
+    don't get to that conclusion from a CVE list. You get to it from a graph
+    plus a counter.
+  </p>
+
+  <h3>The second pattern: RBAC tightening</h3>
+  <p>
+    After patches, the most common choke-point we surface is removing an
+    over-broad <em>service account → Secrets</em> binding. A workload that
+    doesn't need to read Secrets shouldn't be able to. ARGUS flags every
+    binding where the privilege exceeds the workload's actual reach.
+  </p>
+
+  <h3>What ships in the Fixes screen</h3>
+  <ol class="steps">
+    <li>A <b>ranked list</b> of remediations — patches, RBAC tightening, network policies, security-context hardening — each with a one-line rationale.</li>
+    <li>A <b>full unified diff</b> against your manifests where applicable.</li>
+    <li>A <b>ready-to-open PR body</b> with the engine's reasoning, the controls it references, and the findings it closes.</li>
+    <li>An <b>Approve</b> button that writes the PR bundle to disk for review. <em>Nothing is ever applied to your cluster.</em></li>
+  </ol>
+
+  <div class="foot">
+    <span>K8s Sentinel · Walkthrough</span>
+    <span>05 · Apply this first</span>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  Page 7 — Reports + Ask                                       -->
+<!-- ============================================================ -->
+<section class="page">
+  <h2><span class="num">06</span>Reports &amp; conversation</h2>
+  <p class="lede">
+    The artefact your auditor wants. The answer your CTO wants. The
+    explanation your on-call wants.
+  </p>
+
+  <h3>Reports — four formats, one click</h3>
+  <div class="tiles">
+    <div class="tile">
+      <h4>PDF</h4>
+      <p>Apple-styled, paginated, dependency-free generator. The format your auditor will accept without follow-up questions.</p>
+    </div>
+    <div class="tile">
+      <h4>Markdown</h4>
+      <p>Drop it in your platform repo, in a Confluence page, in a Slack thread. Renders everywhere.</p>
+    </div>
+    <div class="tile">
+      <h4>JSON</h4>
+      <p>The full normalized posture for downstream tools — SIEMs, ticketing, your own dashboards.</p>
+    </div>
+    <div class="tile">
+      <h4>HTML</h4>
+      <p>The same dashboard view, packaged as a single file. Forward it; it stands alone.</p>
+    </div>
+  </div>
+
+  <h3>Ask — the Spotlight bar for security</h3>
+  <p>
+    The <em>Ask</em> screen is one input box. Type a plain-English question;
+    the analyst answers in one sentence, with the matching resources linked.
+    No fluff, no opinion drift — it operates only on the data the engine
+    already collected, never reaches outside.
+  </p>
+<pre>"Show everything internet-exposed running as root."
+"Which service accounts can read Secrets cluster-wide?"
+"What changed since the last scan?"
+"Why is finding trivy-001 ranked above kubescape-005?"</pre>
+  <p>
+    Behind the scenes, queries are sanitized at the trust boundary before any
+    LLM sees them. Scan input is hardened the same way — there is no path by
+    which an attacker who controls a container image annotation can make the
+    assistant generate exploit code. Defensive by construction.
+  </p>
+
+  <div class="foot">
+    <span>K8s Sentinel · Walkthrough</span>
+    <span>06 · Reports &amp; conversation</span>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  Page 8 — Promises                                            -->
+<!-- ============================================================ -->
+<section class="page">
+  <h2><span class="num">07</span>Six promises</h2>
+  <p class="lede">
+    The things we will not do, in any mode, ever.
+  </p>
+
+  <div class="tiles">
+    <div class="tile">
+      <div class="icon good">1</div>
+      <h4>Read-only by default.</h4>
+      <p>
+        The agent's Kubernetes role grants only <code>get</code>,
+        <code>list</code>, <code>watch</code>. There is no way through this
+        product to widen it.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon good">2</div>
+      <h4>Zero <em>secrets</em> verbs.</h4>
+      <p>
+        We don't list Secret names. We don't read Secret data. Ever. Secret
+        <em>reachability</em> is inferred from RBAC + volume mounts.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon good">3</div>
+      <h4>Propose, don't apply.</h4>
+      <p>
+        Every fix is a pull-request bundle for a human to approve. The agent
+        cannot, by construction, change your cluster or your repo.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon good">4</div>
+      <h4>Untrusted input is hardened.</h4>
+      <p>
+        CVE descriptions, image tags, scanner output — all treated as hostile
+        before they reach an LLM. One sanitisation chokepoint, audited,
+        tested.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon good">5</div>
+      <h4>Everything is logged.</h4>
+      <p>
+        Hash-chained immutable audit. Every decision, every tool call, every
+        command leaves a verifiable trail.
+      </p>
+    </div>
+    <div class="tile">
+      <div class="icon good">6</div>
+      <h4>Air-gap is one flag.</h4>
+      <p>
+        Switch the LLM engine to the local <em>Hermes</em> adapter and the
+        chart drops all public egress. Same product, zero external calls.
+      </p>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span>K8s Sentinel · Walkthrough</span>
+    <span>07 · Six promises</span>
+  </div>
+</section>
+
+<!-- ============================================================ -->
+<!--  Page 9 — Get started                                         -->
+<!-- ============================================================ -->
+<section class="page">
+  <h2><span class="num">08</span>Get started</h2>
+  <p class="lede">
+    Sixty seconds to a live scan against a real cluster.
+  </p>
+
+  <ol class="steps">
+    <li>
+      <b>Open the dashboard.</b><br/>
+      <code>https://control-plane-azure.vercel.app</code>
+    </li>
+    <li>
+      <b>Sign in</b> (GitHub OAuth) and open <em>Connect a cluster.</em>
+    </li>
+    <li>
+      <b>Pick a method.</b> Helm for the long term; Public-key for the next
+      five minutes.
+    </li>
+    <li>
+      <b>Run the one command</b> we print for you, on any machine with
+      cluster-admin access.
+    </li>
+    <li>
+      <b>Click <em>Run scan</em>.</b> First scan finishes in 30 – 90 seconds.
+    </li>
+    <li>
+      <b>Read the Overview.</b> Apply the top "Apply first" item this week.
+    </li>
+  </ol>
+
+  <h3>Going to production</h3>
+  <p>
+    For ongoing use, install the Helm chart in <code>hybrid</code> mode (agent
+    in your cluster, dashboard hosted by us) or <code>cluster-local</code>
+    mode for air-gap. Add the accepted-risk waiver ConfigMap if you have
+    findings you've explicitly chosen to live with — the engine will keep
+    those out of your action list, but auto-reopen if the underlying control
+    weakens.
+  </p>
+
+  <h3>Where the docs live</h3>
+  <table class="spec">
+    <thead><tr><th>Doc</th><th>For</th></tr></thead>
+    <tbody>
+      <tr><td class="t">README.md</td><td>Overview + quick links</td></tr>
+      <tr><td class="t">docs/GO_LIVE.md</td><td>Image build → Supabase migration → cluster onboard</td></tr>
+      <tr><td class="t">docs/BUILD.md</td><td>The original product spec (architecture, phases, security model)</td></tr>
+      <tr><td class="t">docs/DATA-BOUNDARY.md</td><td>Exactly which bytes ever leave a cluster</td></tr>
+      <tr><td class="t">docs/PUBKEY_CONNECT_SPEC.md</td><td>Public-key method, design notes</td></tr>
+      <tr><td class="t">deploy/helm/README.md</td><td>Every chart value, both modes</td></tr>
+    </tbody>
+  </table>
+
+  <blockquote>
+    The goal is uncomplicated: tell you what an attacker would do today, what
+    to fix this week, and never touch your cluster doing it.
+  </blockquote>
+
+  <div class="foot">
+    <span>K8s Sentinel · Walkthrough · 0.2.0 ARGUS v3</span>
+    <span>08 · Get started</span>
+  </div>
+</section>
+
+</body>
+</html>
