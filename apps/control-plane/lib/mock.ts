@@ -1,4 +1,4 @@
-import type { AttackPath, Fix, Finding, RunRecord, RunSnapshot } from './types';
+import type { AttackPath, ChokePoint, Fix, Finding, RunRecord, RunSnapshot, ThreatIntel } from './types';
 
 /**
  * Demo dataset — the real "payment-api" scenario the offline scanners produce
@@ -8,18 +8,26 @@ import type { AttackPath, Fix, Finding, RunRecord, RunSnapshot } from './types';
 
 const RUN_ID = 'run-demo-001';
 
+export const DEMO_INTEL: ThreatIntel = {
+  source: 'live:cisa-kev',
+  version: '2026.05.27',
+  kevCount: 1607,
+  epssCount: 218_543,
+};
+
 export const DEMO_RUN: RunRecord = {
   id: RUN_ID,
   clusterId: 'cluster-demo',
   createdAt: '2026-05-27T09:14:00.000Z',
   status: 'complete',
-  engine: 'claude',
+  engine: 'argus-v3',
   usedFixtures: true,
   findingCount: 12,
   pathCount: 2,
   riskScore: 100,
   summary:
     'Internet-exposed payment-api runs privileged as root with a critical CVE and a service account that can read cluster Secrets — a complete external-to-secret attack path.',
+  intel: DEMO_INTEL,
 };
 
 /** Previous run, for the "since last scan" delta on Overview. */
@@ -60,6 +68,14 @@ export const DEMO_FINDINGS: Finding[] = [
     attackPathId: 'path-1',
     baseScore: 7.4,
     controls: [{ framework: 'CIS', id: 'CIS-5.1.3' }],
+    cve: 'CVE-2023-0286',
+    kev: true,
+    ransomware: false,
+    epss: 0.78,
+    ssvc: 'Act',
+    confidence: 'high',
+    exposure: 'open',
+    reaches: ['secret', 'cluster_admin'],
   }),
   f({
     id: 'kubescape:5e6f',
@@ -77,6 +93,10 @@ export const DEMO_FINDINGS: Finding[] = [
       { framework: 'NSA-CISA', id: 'RBAC' },
       { framework: 'CIS', id: 'CIS-5.1.1' },
     ],
+    ssvc: 'Act',
+    confidence: 'high',
+    exposure: 'cluster',
+    reaches: ['secret'],
   }),
   f({
     id: 'kubescape:7a8b',
@@ -397,9 +417,33 @@ export const DEMO_FIXES: Fix[] = [
   },
 ];
 
+export const DEMO_CHOKE_POINTS: ChokePoint[] = [
+  {
+    id: 'cp-1',
+    control: { type: 'patch', ref: 'CVE-2023-0286', workload: 'prod/payment-api' },
+    breaks: 2,
+    totalPaths: 2,
+    targets: ['secret:prod/payment-db-creds', 'CLUSTER-ADMIN'],
+    severity: 'critical',
+    description: 'Patch CVE-2023-0286 on prod/payment-api',
+    priority: 2,
+  },
+  {
+    id: 'cp-2',
+    control: { type: 'rbac-least-privilege', sa: 'prod/payment-sa', what: 'secrets' },
+    breaks: 1,
+    totalPaths: 2,
+    targets: ['secret:prod/payment-db-creds'],
+    severity: 'high',
+    description: 'Remove secrets RBAC from prod/payment-sa',
+    priority: 1,
+  },
+];
+
 export const DEMO_SNAPSHOT: RunSnapshot = {
   run: DEMO_RUN,
   findings: DEMO_FINDINGS,
   paths: DEMO_PATHS,
   fixes: DEMO_FIXES,
+  chokePoints: DEMO_CHOKE_POINTS,
 };
