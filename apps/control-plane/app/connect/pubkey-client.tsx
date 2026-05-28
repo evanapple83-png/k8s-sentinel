@@ -238,7 +238,8 @@ function Stepper({ reached }: { reached: Set<StepKey> }) {
     <ol className="space-y-2">
       {STEPS.map((s, i) => {
         const done = reached.has(s.key);
-        const active = !done && (i === 0 ? true : reached.has(STEPS[i - 1].key));
+        const prev = i === 0 ? null : STEPS[i - 1];
+        const active = !done && (i === 0 ? true : prev ? reached.has(prev.key) : false);
         return (
           <li key={s.key} className="flex items-center gap-3">
             <span
@@ -377,7 +378,7 @@ function extractApproveCommand(res: PollClusterResult | null): string | null {
   if (!res || !res.ok) return null;
   for (let i = res.detail.events.length - 1; i >= 0; i -= 1) {
     const ev = res.detail.events[i];
-    if (ev.type === 'awaiting_approval') {
+    if (ev && ev.type === 'awaiting_approval') {
       const cmd = (ev.detail as { approveCommand?: unknown }).approveCommand;
       if (typeof cmd === 'string' && cmd.length > 0 && cmd.length < 1024) return cmd;
       return null;

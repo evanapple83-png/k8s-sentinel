@@ -94,5 +94,5 @@ export async function POST(req: Request) {
 function extractBearer(req: Request): string | null {
   const h = req.headers.get('authorization') ?? '';
   const m = h.match(/^Bearer\s+(\S+)$/i);
-  return m ? m[1] : null;
+  return m && m[1] ? m[1] : null;
 }
