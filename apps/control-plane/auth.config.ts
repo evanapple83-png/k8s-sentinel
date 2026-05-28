@@ -85,10 +85,13 @@ export const authConfig = {
       if (!authEnabled()) return true;
 
       const { pathname } = request.nextUrl;
-      // Public paths always allowed.
+      // Public paths always allowed. `/api/agent/*` is machine-to-machine
+      // (the relay/agent), authenticated by install token / shared secret in
+      // the route itself — it must NOT be behind the user-session gate.
       if (
         pathname.startsWith('/login') ||
         pathname.startsWith('/api/auth') ||
+        pathname.startsWith('/api/agent') ||
         pathname.startsWith('/mfa')
       ) {
         return true;
