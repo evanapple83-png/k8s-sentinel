@@ -5,3 +5,17 @@
 **/data
 .git
 *.log
+
+# Python build/output artefacts — never ship in the image.
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+
+# ARGUS-specific runtime junk.
+argus/engine_v3/cache/
+argus/engine_v3/out/
+argus/tests/                  # tests don't run inside the image
+
+# macOS noise.
+**/.DS_Store
