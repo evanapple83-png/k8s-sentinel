@@ -101,6 +101,11 @@ export const authConfig = {
         // `/api/clusters/<id>` shapes stay session-auth'd.
         pathname === '/api/clusters/self' ||
         /^\/api\/clusters\/[^/]+\/events\/?$/.test(pathname) ||
+        // AI narration endpoints (/api/ai/explain-finding etc.) — exempted
+        // from the middleware-level redirect so unauthenticated callers get
+        // a JSON 401 from the route handler instead of an HTML /login
+        // redirect. The route handler itself enforces session + membership.
+        pathname.startsWith('/api/ai/') ||
         pathname.startsWith('/mfa')
       ) {
         return true;

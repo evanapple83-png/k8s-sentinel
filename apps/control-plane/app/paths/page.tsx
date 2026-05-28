@@ -1,8 +1,10 @@
 import { Globe, Box, Bug, KeyRound, ShieldAlert, Network } from 'lucide-react';
 import { Card, CardContent, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/placeholder';
+import { FEATURE_AI_NARRATION } from '@/lib/flags';
 import type { AttackStep } from '@/lib/types';
 import { getActiveData, type SearchParamsInput } from '@/lib/active';
+import { PathNarration } from './path-narration';
 
 const KIND_META: Record<string, { icon: typeof Box; label: string; tone: string }> = {
   exposed: { icon: Globe, label: 'Exposed', tone: 'var(--critical)' },
@@ -19,6 +21,14 @@ export default async function PathsPage({
 }) {
   const data = await getActiveData(searchParams);
   const paths = data.snapshot?.paths ?? [];
+  const ai =
+    FEATURE_AI_NARRATION && !data.demo && data.activeAccountId && data.activeClusterId && data.snapshot
+      ? {
+          accountId: data.activeAccountId,
+          clusterId: data.activeClusterId,
+          runId: data.snapshot.run.id,
+        }
+      : null;
 
   if (!data.snapshot || paths.length === 0) {
     return (
@@ -40,7 +50,7 @@ export default async function PathsPage({
         </p>
       </header>
 
-      {paths.map((p) => (
+      {paths.map((p, idx) => (
         <Card key={p.id}>
           <CardHeader className="gap-2">
             <div className="flex items-center justify-between">
@@ -62,6 +72,13 @@ export default async function PathsPage({
                 <StepNode key={i} step={s} last={i === p.steps.length - 1} />
               ))}
             </ol>
+            {ai ? (
+              <PathNarration
+                pathIndex={idx}
+                pathLabel={p.narrative.length > 60 ? `${p.narrative.slice(0, 57)}…` : p.narrative}
+                ai={ai}
+              />
+            ) : null}
           </CardContent>
         </Card>
       ))}

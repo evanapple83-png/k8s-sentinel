@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { SeverityBadge } from '@/components/ui/badge';
@@ -12,6 +12,12 @@ import {
   SsvcBadge,
   EpssChip,
 } from '@/components/bits';
+import {
+  ExplainButton,
+  ExplainDrawer,
+  ExplainResultPanel,
+  useExplain,
+} from '@/components/ai-explain';
 import { cn } from '@/lib/utils';
 import type { Finding, Severity, SsvcDecision } from '@/lib/types';
 
@@ -22,7 +28,19 @@ function scoreColor(score: number): string {
   return score >= 70 ? 'var(--critical)' : score >= 40 ? 'var(--warn)' : 'var(--clear)';
 }
 
-export function FindingsTable({ findings }: { findings: Finding[] }) {
+export interface AiContext {
+  accountId: string;
+  clusterId: string;
+  runId: string;
+}
+
+export function FindingsTable({
+  findings,
+  aiContext = null,
+}: {
+  findings: Finding[];
+  aiContext?: AiContext | null;
+}) {
   const [q, setQ] = useState('');
   const [sevs, setSevs] = useState<Set<Severity>>(new Set());
   const [reachableOnly, setReachableOnly] = useState(false);
@@ -38,6 +56,7 @@ export function FindingsTable({ findings }: { findings: Finding[] }) {
     [findings],
   );
   const [srcs, setSrcs] = useState<Set<string>>(new Set());
+  const [explainFor, setExplainFor] = useState<Finding | null>(null);
 
   const rows = useMemo(() => {
     return findings.filter((f) => {
@@ -125,15 +144,16 @@ export function FindingsTable({ findings }: { findings: Finding[] }) {
                 <th className="px-4 py-2.5 font-medium">Source</th>
                 <th className="px-4 py-2.5 font-medium">Reachable</th>
                 {hasV3 ? <th className="px-4 py-2.5 font-medium">Intel</th> : null}
+                {aiContext ? <th className="px-4 py-2.5 font-medium" /> : null}
               </tr>
             </thead>
             <tbody>
               {rows.map((f) => (
-                <Row key={f.id} f={f} showV3={hasV3} />
+                <Row key={f.id} f={f} showV3={hasV3} onExplain={aiContext ? () => setExplainFor(f) : undefined} />
               ))}
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={hasV3 ? 7 : 6} className="px-4 py-10 text-center text-sm text-muted-foreground">
+                  <td colSpan={(hasV3 ? 7 : 6) + (aiContext ? 1 : 0)} className="px-4 py-10 text-center text-sm text-muted-foreground">
                     No findings match these filters.
                   </td>
                 </tr>
@@ -142,11 +162,75 @@ export function FindingsTable({ findings }: { findings: Finding[] }) {
           </table>
         </div>
       </Card>
+
+      {aiContext && explainFor ? (
+        <FindingExplainDrawer
+          finding={explainFor}
+          aiContext={aiContext}
+          onClose={() => setExplainFor(null)}
+        />
+      ) : null}
     </div>
   );
 }
 
-function Row({ f, showV3 }: { f: Finding; showV3: boolean }) {
+function FindingExplainDrawer({
+  finding,
+  aiContext,
+  onClose,
+}: {
+  finding: Finding;
+  aiContext: AiContext;
+  onClose: () => void;
+}) {
+  const cacheKey = `finding:${aiContext.runId}:${finding.id}`;
+  const body = useMemo(
+    () => ({
+      accountId: aiContext.accountId,
+      clusterId: aiContext.clusterId,
+      findingId: finding.id,
+    }),
+    [aiContext.accountId, aiContext.clusterId, finding.id],
+  );
+  const { state, run } = useExplain('explain-finding', cacheKey, body);
+
+  // Auto-run on mount — the drawer opening IS the user's "explain this" intent.
+  useEffect(() => {
+    if (state.kind === 'idle') void run();
+    // run/state intentionally omitted: we want exactly one auto-run per mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <ExplainDrawer open onClose={onClose} title={finding.title}>
+      <div className="space-y-3">
+        <div className="rounded-md border bg-muted/30 p-3 text-[12px]">
+          <div className="font-mono text-[11px] text-muted-foreground">{finding.cve ?? finding.ruleId}</div>
+          <div className="mt-1 text-foreground">
+            {finding.resource.kind}
+            {finding.resource.namespace ? ` · ${finding.resource.namespace}` : ''} ·{' '}
+            {finding.resource.name}
+          </div>
+        </div>
+        {state.kind === 'loading' ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <span className="inline-block size-3 animate-pulse rounded-full bg-muted-foreground/40" />
+            Asking the analyst…
+          </div>
+        ) : null}
+        {state.kind === 'error' ? (
+          <div className="rounded-md border border-critical/30 bg-critical/5 p-3 text-[13px] text-critical">
+            {state.message}
+            {state.status === 429 ? ` Try again in ~${state.retryAfter ?? 60}s.` : null}
+          </div>
+        ) : null}
+        {state.kind === 'ok' ? <ExplainResultPanel result={state.result} /> : null}
+      </div>
+    </ExplainDrawer>
+  );
+}
+
+function Row({ f, showV3, onExplain }: { f: Finding; showV3: boolean; onExplain?: () => void }) {
   const score = f.exploitScore ?? 0;
   return (
     <tr className="border-b transition-colors last:border-0 hover:bg-accent/40">
@@ -202,6 +286,11 @@ function Row({ f, showV3 }: { f: Finding; showV3: boolean }) {
               </span>
             ) : null}
           </div>
+        </td>
+      ) : null}
+      {onExplain ? (
+        <td className="px-4 py-3">
+          <ExplainButton onClick={onExplain} loading={false} />
         </td>
       ) : null}
     </tr>

@@ -1,4 +1,5 @@
 import { EmptyState } from '@/components/placeholder';
+import { FEATURE_AI_NARRATION } from '@/lib/flags';
 import { getActiveData, type SearchParamsInput } from '@/lib/active';
 import { FindingsTable } from './findings-table';
 
@@ -20,5 +21,17 @@ export default async function FindingsPage({
     );
   }
 
-  return <FindingsTable findings={findings} />;
+  // AI narration is gated server-side; if the flag is off OR we're in demo
+  // mode (no real accountId/clusterId to call the API with), the Explain
+  // affordance is hidden from the rendered table.
+  const aiContext =
+    FEATURE_AI_NARRATION && !data.demo && data.activeAccountId && data.activeClusterId
+      ? {
+          accountId: data.activeAccountId,
+          clusterId: data.activeClusterId,
+          runId: data.snapshot.run.id,
+        }
+      : null;
+
+  return <FindingsTable findings={findings} aiContext={aiContext} />;
 }
