@@ -46,6 +46,26 @@ spec:
               value: {{ .Values.engine.models.author | quote }}
             - name: API_PORT
               value: {{ .Values.service.port | quote }}
+            # --- ARGUS v3 -----------------------------------------------------
+            # The tunnel-client honours these when the scan command arrives.
+            # SENTINEL_SCANNER=argus is the production default (v3 attack-graph);
+            # 'builtin' keeps the legacy TS orchestrator reachable for rollback.
+            - name: SENTINEL_SCANNER
+              value: {{ .Values.argus.scanner | quote }}
+            {{- if .Values.argus.imagesOnly }}
+            - name: ARGUS_IMAGES_ONLY
+              value: "1"
+            {{- end }}
+            {{- if .Values.argus.noNetwork }}
+            - name: ARGUS_NO_NETWORK
+              value: "1"
+            {{- end }}
+            {{- if and .Values.argus.acceptedRisks.enabled .Values.argus.acceptedRisks.configMapName }}
+            - name: ARGUS_ACCEPTED_RISKS_DIR
+              value: /etc/sentinel/accepted-risks
+            {{- end }}
+            - name: CLUSTER_NAME
+              value: {{ .Release.Name | quote }}
             {{- if eq .Values.engine.kind "hermes" }}
             - name: HERMES_BASE_URL
               value: {{ .Values.engine.hermes.baseUrl | quote }}
@@ -102,6 +122,11 @@ spec:
               mountPath: /etc/sentinel/relay-certs
               readOnly: true
             {{- end }}
+            {{- if and .Values.argus.acceptedRisks.enabled .Values.argus.acceptedRisks.configMapName }}
+            - name: accepted-risks
+              mountPath: /etc/sentinel/accepted-risks
+              readOnly: true
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -111,4 +136,10 @@ spec:
         - name: relay-certs
           secret:
             secretName: {{ .Values.relay.clientCertSecret }}
+        {{- end }}
+        {{- if and .Values.argus.acceptedRisks.enabled .Values.argus.acceptedRisks.configMapName }}
+        - name: accepted-risks
+          configMap:
+            name: {{ .Values.argus.acceptedRisks.configMapName | quote }}
+            optional: false
         {{- end }}
