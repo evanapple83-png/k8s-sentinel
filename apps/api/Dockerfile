@@ -116,8 +116,14 @@ ENV NODE_ENV=production \
 # py3-yaml from apk gives us a matching musl build without compiling C ext.
 # kubernetes python client is pure Python — installs cleanly on musl via pip.
 # --break-system-packages is safe inside a container dedicated to ARGUS.
+#
+# libc6-compat: kube-bench is shipped as a glibc binary; alpine is musl.
+# Without this shim, exec'ing kube-bench fails with exit 127 ("not found")
+# even though the binary is on PATH. trivy + kubescape are CGO_ENABLED=0
+# pure-Go and don't need this, but installing it once is cheaper than two
+# different distros.
 RUN apk add --no-cache \
-        python3 py3-pip py3-yaml ca-certificates \
+        python3 py3-pip py3-yaml ca-certificates libc6-compat \
  && pip install --no-cache-dir --break-system-packages --root-user-action=ignore kubernetes
 
 # TS bundle into /app, Python ARGUS tree alongside it.
