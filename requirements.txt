@@ -1,2 +1,5 @@
 kubernetes>=29.0.0
 PyYAML>=6.0
+# Used by argus.bootstrap (`argus bootstrap csr`) for keypair + CSR
+# generation. Stays a leaf dep — the rest of argus has no need for it.
+cryptography>=42.0.0
