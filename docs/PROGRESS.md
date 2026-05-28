@@ -161,5 +161,106 @@ roles, install-token onboarding, live tenant-scoped data, permissions UX +
       tunnel and through the ingest webhook into the hosted store, all with the
       clusterId relay-stamped (no tenant spoofing). 119 tests green.
 
-> Remaining to go fully live: provision Fly + a live Supabase + run the CA, then
-> follow `DEPLOY.md §3` (needs the user's accounts).
+> Phase 5a went live on 28 May 2026: relay deployed to Fly
+> (`k8s-sentinel-relay.fly.dev`), control plane on Vercel
+> (`control-plane-azure.vercel.app`), Supabase project `fmdrkydbihmmemddqdvp`
+> in production with migrations 0001–0004 applied.
+
+## ✅ Phase 5b — ARGUS v3 attack-graph engine (default scanner)
+
+Replaces the TS-only legacy orchestrator path with a deterministic Python
+attack-graph engine bundled into the same agent image. CISA-KEV-aware,
+SSVC-tiered, choke-point-ranked.
+
+- [x] **Python `argus/` package** — read-only k8s collector (`inventory.py`),
+      scanner adapters (`scanners.py` — Trivy / kube-bench / Kubescape, missing
+      binaries degrade gracefully), the deterministic v3 engine
+      (`engine_v3/engine.py` — scoring, attack-path, accepted-risk governance,
+      frozen as the source of truth), CISA-KEV live fetch + cache + override,
+      EPSS / SSVC scoring, choke-point analysis, `argus scan` CLI.
+- [x] **TS bridge** (`apps/api/src/tunnel/argus.ts`, 600 LOC) — spawns the
+      Python pipeline as a short-lived subprocess on each `scan` command,
+      validates the result against `PostureSnapshotSchema` in-cluster, maps
+      onto typed v3 wire fields. `SENTINEL_SCANNER=argus` (default) /
+      `=builtin` (legacy rollback). 22 vitest tests.
+- [x] **Wire contract widened** — `packages/relay-protocol` adds optional
+      `cve / kev / ransomware / epss / ssvc / confidence / exposure / reaches`
+      on `WireFinding`, plus typed `WireChokePoint[]` and `WireThreatIntel`
+      on `PostureSnapshot`. Backward-compatible (all optional).
+- [x] **Supabase migration 0005** — v3 columns on `finding` + `run`, new
+      `choke_point` table, partial indexes for `kev = true` and `ssvc = 'Act'`.
+      Applied to `fmdrkydbihmmemddqdvp` via the Supabase MCP.
+- [x] **Dashboard renders v3** — `IntelBanner` shows the pinned KEV catalog
+      version on every screen; Overview gets 4 stat-tiles (Critical / KEV /
+      SSVC Act / Reachable) + `ChokePointsPanel` ("Apply first" ranked
+      single-control fixes that collapse N attack paths each); FindingsTable
+      grows an Intel column with KEV / Ransomware / SSVC / EPSS badges + a
+      KEV-only filter chip + SSVC tier chips.
+- [x] **Unified image** — `apps/api/Dockerfile` now packages TS tunnel-client
+      + Python ARGUS + pinned Trivy 0.70.0 / kube-bench 0.7.3 / Kubescape
+      3.0.20 in one nonroot image. `libc6-compat` shim for kube-bench's
+      glibc binary on alpine musl. Published as
+      `ghcr.io/evanapple83-png/k8s-sentinel:0.2.0-argus-v3` (+ `argus-v3`,
+      `latest`).
+- [x] **Helm chart bump → 0.2.0-argus-v3** — `argus.*` knobs (scanner,
+      imagesOnly, noNetwork, acceptedRisks ConfigMap mount for GitOps
+      waivers). RBAC tightened: the chart's ClusterRole now has **zero
+      `secrets` verbs** (the legacy `secrets: ["list"]` rule is removed —
+      ARGUS doesn't need it).
+- [x] **DoD:** end-to-end live in production. Hosted dashboard renders v3
+      shapes; Supabase persists v3 columns + choke_point rows; GHCR image
+      builds clean with all five scanner binaries on PATH; helm chart pins
+      the matching tag. **95 Python tests + 37 apps/api TS tests + 222 total
+      workspace tests green.** Docs: `docs/GO_LIVE.md`,
+      `docs/argus-scanner-agent.md`, `docs/argus-go-live-task.md`.
+
+## ✅ Phase 5c — Public-key cluster connect (CSR-based, no install)
+
+A second cluster-connect method next to Helm: the user runs one CLI command
+that generates a fresh keypair locally, submits a CSR, gets it approved by
+a cluster-admin, and the agent authenticates as a short-lived read-only
+client-cert user. Nothing is installed in-cluster. Built by two parallel
+agents against a frozen wire contract, then integrated.
+
+- [x] **Backend** (`apps/control-plane`) — Supabase migration 0006
+      (`cluster_enrollment` + `connection_event` + `scans`), `lib/pubkey-connect.ts`
+      (token mint with sha256-only storage, constant-time hash compare,
+      event reducer → cluster status projection, scan ingest that fans out
+      via the existing `ingestSnapshot` so legacy screens keep rendering),
+      5 new API routes (`POST /api/clusters`, `GET /api/clusters/[id]`,
+      `POST /api/clusters/[id]/events`, `POST /api/scans`, `GET /api/clusters/self`).
+      All gated by `FEATURE_PUBKEY_CONNECT` (404 when off).
+- [x] **CLI** (`argus/`) — `argus bootstrap csr` subcommand (820 LOC) with
+      EC P-256 keypair (private key 0600 temp file, atexit cleanup),
+      `CertificateSigningRequest` submit (`signerName=kubernetes.io/kube-apiserver-client`,
+      configurable `--ttl`), approval gate (default prints the exact
+      `kubectl certificate approve` command; `--auto-approve` for kind/dev),
+      read-only `ClusterRoleBinding` to `CN=argus-agent-<…>, O=argus-readonly`
+      (matching the Helm-path RBAC exactly — **zero secrets verbs**), scoped
+      agent kubeconfig, scan + push, optional `--cleanup`. Also a
+      `--bootstrap csr` shortcut on the existing `scan` subcommand.
+      Stdlib-only `events_client.py` for the Bearer-token API calls.
+      27 pytest cases.
+- [x] **UI** (`apps/control-plane`) — segmented `[ Helm install ] [ Public key ]`
+      control on `/connect`; Public-key tab has the copy-paste CLI command +
+      status stepper (`Command issued → CSR submitted → Awaiting admin
+      approval → Approved → First scan received ✅`) driven by a 3s poller
+      on `GET /api/clusters/:id`; Regenerate button mirrors the Helm tab.
+      21 vitest cases.
+- [x] **Security model** — enrollment token format `ent_<base64url(32)>`,
+      15 min TTL, single-use, sha256-only at rest; the web app never sees
+      the private key; client certs aren't revocable in K8s so short TTL
+      (default 3600 s) is the documented mitigation. Wire contract:
+      `docs/PUBKEY_CONNECT_CONTRACT.md`.
+- [x] **One contract deviation** — the spec writes `/api/clusters/_self` but
+      Next.js App Router treats `_`-prefixed folders as private (unrouted).
+      Renamed to `/api/clusters/self` on both sides; semantics identical.
+- [x] **DoD:** PR #6 merged to main, deployed to `control-plane-azure.vercel.app`,
+      `FEATURE_PUBKEY_CONNECT=1` set in Vercel production env — the new
+      method is live, the segmented toggle appears, and the public-key flow
+      can drive a real cluster end-to-end. Feature-flag default off keeps
+      the legacy single-method UI byte-identical until explicitly enabled.
+
+> All eight original product features (Phase 0–4) plus the hosted hybrid
+> mode (5a) plus the v3 attack-graph engine (5b) plus the second connect
+> method (5c) are live in production on 28 May 2026.
