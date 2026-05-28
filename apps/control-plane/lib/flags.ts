@@ -16,3 +16,6 @@ function readBool(name: string): boolean {
 
 /** Public-key connect method (the new tab on /connect + its API routes). */
 export const FEATURE_PUBKEY_CONNECT = readBool('FEATURE_PUBKEY_CONNECT');
+
+/** AI narration layer (explain-finding / explain-path / explain-fix / ask). */
+export const FEATURE_AI_NARRATION = readBool('FEATURE_AI_NARRATION');
