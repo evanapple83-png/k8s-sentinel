@@ -54,7 +54,6 @@ export async function mintInstallToken(
 export interface RegisterResult {
   clusterId: string;
   accountId: string;
-  runId: string;
   /** Durable, cluster-bound reconnect credential — returned ONCE, on first boot. */
   reconnectToken: string;
 }
@@ -116,26 +115,19 @@ export async function consumeInstallToken(
     .update({ used_at: new Date().toISOString(), used_by_cluster: cluster.id })
     .eq('id', tok.id);
 
-  // Auto-trigger first scan — placeholder run; the agent streams real findings
-  // up through the relay (fase 2). Stable, sortable id.
-  const runId = `run-${Date.now()}`;
-  await db.from('run').insert({
-    id: runId,
-    cluster_id: cluster.id,
-    status: 'running',
-    engine: 'claude',
-  });
-
+  // NB: we do NOT create a placeholder run here. The real first scan is
+  // dispatched by the Connect screen the moment the agent registers (a true
+  // run that completes with findings), so a phantom "running" row would only
+  // mislead the dashboard. (F8)
   await recordAudit({
     accountId: tok.account_id,
     actor: 'agent',
     action: 'cluster.registered',
     clusterId: cluster.id,
-    runId,
-    detail: { agentVersion: meta.agentVersion ?? null, autoScan: true },
+    detail: { agentVersion: meta.agentVersion ?? null },
   });
 
-  return { clusterId: cluster.id, accountId: tok.account_id, runId, reconnectToken };
+  return { clusterId: cluster.id, accountId: tok.account_id, reconnectToken };
 }
 
 /**

@@ -19,6 +19,7 @@ export function ConnectClient() {
   const [scanState, setScanState] = useState<'idle' | 'running' | 'done' | string>('idle');
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoScanned = useRef(false); // fire the first scan once on connect (F8)
 
   const stopPolling = useCallback(() => {
     if (timer.current) clearInterval(timer.current);
@@ -71,9 +72,9 @@ export function ConnectClient() {
     }
   }
 
-  async function scanNow() {
+  async function scanNow(id: string = clusterId) {
     setScanState('running');
-    const res = await triggerScan(clusterId);
+    const res = await triggerScan(id);
     setScanState(
       res.ok
         ? 'done'
@@ -82,6 +83,15 @@ export function ConnectClient() {
           : `couldn’t start a scan (${res.reason})`,
     );
   }
+
+  // F8: dispatch the REAL first scan once the agent registers (no phantom run).
+  useEffect(() => {
+    if (phase === 'connected' && clusterId && !autoScanned.current) {
+      autoScanned.current = true;
+      void scanNow(clusterId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, clusterId]);
 
   if (phase === 'connected') {
     return (
@@ -101,7 +111,7 @@ export function ConnectClient() {
             <Link href="/" className={cn(buttonVariants())}>
               Go to Overview
             </Link>
-            <Button variant="ghost" onClick={scanNow} disabled={scanState === 'running'}>
+            <Button variant="ghost" onClick={() => scanNow()} disabled={scanState === 'running'}>
               {scanState === 'running' ? (
                 <>
                   <Loader2 className="size-4 animate-spin" /> Scanning…

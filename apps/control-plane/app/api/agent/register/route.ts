@@ -47,7 +47,7 @@ export async function POST(req: Request) {
       clusterName: typeof body.clusterName === 'string' ? body.clusterName : undefined,
     });
     return NextResponse.json(
-      { clusterId: result.clusterId, reconnectToken: result.reconnectToken, runId: result.runId, scan: 'started' },
+      { clusterId: result.clusterId, reconnectToken: result.reconnectToken },
       { status: 201 },
     );
   } catch (err) {
