@@ -56,19 +56,28 @@ async function ingestToControlPlane(clusterId: string, snapshot: unknown): Promi
  * Resolve an agent to its clusterId. mTLS cert (CN) is authoritative; the token
  * path is the first-boot bootstrap that exchanges the install token upstream.
  */
-async function verifyAgent(reg: RegisterMsg, ctx: ConnContext): Promise<{ clusterId: string }> {
+async function verifyAgent(reg: RegisterMsg, ctx: ConnContext): Promise<{ clusterId: string; reconnectToken?: string }> {
   if (ctx.certCommonName) return { clusterId: ctx.certCommonName };
 
-  if (reg.token && CONTROL_PLANE_URL) {
+  // Token paths (issue #11): a durable reconnect token (replayable) takes
+  // precedence over the single-use install token. Both are validated upstream.
+  const hasReconnect = Boolean(reg.reconnectToken && reg.clusterId);
+  if ((hasReconnect || reg.token) && CONTROL_PLANE_URL) {
     const res = await fetch(`${CONTROL_PLANE_URL}/api/agent/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ token: reg.token, agentVersion: reg.agentVersion, clusterName: reg.clusterName }),
+      body: JSON.stringify(
+        hasReconnect
+          ? { clusterId: reg.clusterId, reconnectToken: reg.reconnectToken, agentVersion: reg.agentVersion }
+          : { token: reg.token, agentVersion: reg.agentVersion, clusterName: reg.clusterName },
+      ),
     });
     if (!res.ok) throw new Error(`control-plane register returned ${res.status}`);
-    const body = (await res.json()) as { clusterId?: string };
+    const body = (await res.json()) as { clusterId?: string; reconnectToken?: string };
     if (!body.clusterId) throw new Error('control-plane register returned no clusterId');
-    return { clusterId: body.clusterId };
+    // reconnectToken is present only on the first-boot exchange; pass it through
+    // so the relay can hand it to the agent in the `registered` ack.
+    return { clusterId: body.clusterId, reconnectToken: body.reconnectToken };
   }
   throw new Error('no client cert and no token/control-plane configured');
 }

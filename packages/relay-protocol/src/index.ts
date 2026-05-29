@@ -252,6 +252,12 @@ export const RegisterMsgSchema = z.object({
   clusterName: ShortStr().optional(),
   /** SHA-256 fingerprint of the mTLS client cert the relay terminated. */
   certFingerprint: ShortStr(128).optional(),
+  /**
+   * Durable, cluster-bound reconnect credential (issued in the `registered` ack
+   * on first boot). Presented with `clusterId` on every reconnect so the agent
+   * survives tunnel drops without re-spending its single-use install token.
+   */
+  reconnectToken: ShortStr(512).optional(),
 });
 
 /** relay → agent: registration accepted; the agent is now bound to this cluster. */
@@ -259,6 +265,12 @@ export const RegisteredMsgSchema = z.object({
   t: z.literal('registered'),
   clusterId: ShortStr(),
   sessionId: ShortStr(),
+  /**
+   * Present only on the first-boot (install-token) registration: the durable
+   * reconnect credential the agent must persist and replay on reconnect. Absent
+   * on subsequent reconnects (the agent already holds it).
+   */
+  reconnectToken: ShortStr(512).optional(),
 });
 
 /** control → relay: attach this control connection to a cluster's up-stream. */

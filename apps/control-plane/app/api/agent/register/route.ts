@@ -1,19 +1,41 @@
 import { NextResponse } from 'next/server';
-import { consumeInstallToken, TokenError } from '@/lib/install-tokens';
+import { consumeInstallToken, verifyReconnectToken, TokenError } from '@/lib/install-tokens';
 
 /**
- * Agent registration endpoint (hybrid onboarding). The in-cluster agent POSTs
- * its install token here on first boot; we exchange it for a registered cluster
- * and kick the first scan. Authenticated solely by the (single-use, 15-min)
- * token — there is no user session. In fase 2 the relay issues the agent's mTLS
- * client cert as part of this exchange.
+ * Agent registration endpoint (hybrid onboarding). Two paths, both authenticated
+ * solely by an unguessable token — there is no user session:
+ *
+ *  1. First boot: the agent POSTs its single-use install token; we exchange it
+ *     for a registered cluster, mint a durable reconnect token, kick the first
+ *     scan, and return both `clusterId` and `reconnectToken`.
+ *  2. Reconnect (issue #11): the agent POSTs `{ clusterId, reconnectToken }`; we
+ *     validate the durable token (not single-use) and return its `clusterId`.
+ *     This lets the agent survive tunnel drops without re-spending the install
+ *     token (which was the cause of the perpetual "registration rejected" loop).
  */
 export async function POST(req: Request) {
-  let body: { token?: unknown; agentVersion?: unknown; clusterName?: unknown };
+  let body: { token?: unknown; reconnectToken?: unknown; clusterId?: unknown; agentVersion?: unknown; clusterName?: unknown };
   try {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: 'invalid JSON body' }, { status: 400 });
+  }
+
+  const reconnectToken = typeof body.reconnectToken === 'string' ? body.reconnectToken : '';
+  const clusterId = typeof body.clusterId === 'string' ? body.clusterId : '';
+
+  // Reconnect path takes precedence — a durable credential is present.
+  if (reconnectToken && clusterId) {
+    try {
+      const { clusterId: id } = await verifyReconnectToken(clusterId, reconnectToken);
+      return NextResponse.json({ clusterId: id, reconnect: true }, { status: 200 });
+    } catch (err) {
+      if (err instanceof TokenError) {
+        return NextResponse.json({ error: 'invalid reconnect credential' }, { status: 401 });
+      }
+      console.error('[agent/register] reconnect failed:', err);
+      return NextResponse.json({ error: 'registration failed' }, { status: 500 });
+    }
   }
 
   const token = typeof body.token === 'string' ? body.token : '';
@@ -25,7 +47,7 @@ export async function POST(req: Request) {
       clusterName: typeof body.clusterName === 'string' ? body.clusterName : undefined,
     });
     return NextResponse.json(
-      { clusterId: result.clusterId, runId: result.runId, scan: 'started' },
+      { clusterId: result.clusterId, reconnectToken: result.reconnectToken, runId: result.runId, scan: 'started' },
       { status: 201 },
     );
   } catch (err) {

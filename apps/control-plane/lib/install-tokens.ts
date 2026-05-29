@@ -1,5 +1,5 @@
 import 'server-only';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { supabaseAdmin } from './supabase/server';
 import { recordAudit, requireRole } from './data';
 import { chartOciRef, chartVersion } from './chart';
@@ -55,6 +55,15 @@ export interface RegisterResult {
   clusterId: string;
   accountId: string;
   runId: string;
+  /** Durable, cluster-bound reconnect credential — returned ONCE, on first boot. */
+  reconnectToken: string;
+}
+
+/** Constant-time compare of two sha256 hex digests (equal length by construction). */
+function hashesEqual(a: string, b: string): boolean {
+  const ab = Buffer.from(a, 'utf8');
+  const bb = Buffer.from(b, 'utf8');
+  return ab.length === bb.length && timingSafeEqual(ab, bb);
 }
 
 /**
@@ -79,6 +88,11 @@ export async function consumeInstallToken(
   if (tok.used_at) throw new TokenError('install token already used');
   if (new Date(tok.expires_at).getTime() < Date.now()) throw new TokenError('install token expired');
 
+  // Mint the durable reconnect credential now; the agent persists the raw value
+  // and replays it (with clusterId) on every reconnect (issue #11). Only its
+  // hash is stored — like the install token, the raw value never lands at rest.
+  const reconnectToken = `sk-reconnect-${randomBytes(24).toString('base64url')}`;
+
   // Create the cluster (connected) for the token's account.
   const { data: cluster, error: cErr } = await db
     .from('cluster')
@@ -88,6 +102,7 @@ export async function consumeInstallToken(
       status: 'connected',
       mode: 'hybrid',
       agent_version: meta.agentVersion ?? null,
+      reconnect_token_hash: hash(reconnectToken),
       last_seen_at: new Date().toISOString(),
       connected_at: new Date().toISOString(),
     })
@@ -120,7 +135,38 @@ export async function consumeInstallToken(
     detail: { agentVersion: meta.agentVersion ?? null, autoScan: true },
   });
 
-  return { clusterId: cluster.id, accountId: tok.account_id, runId };
+  return { clusterId: cluster.id, accountId: tok.account_id, runId, reconnectToken };
+}
+
+/**
+ * Validate a durable reconnect token for a known cluster (issue #11). Unlike the
+ * install token this is NOT single-use — the agent replays it on every tunnel
+ * reconnect. Authenticated solely by possession of the (unguessable) token, so
+ * it does its own validation and is NOT behind a user session. Bumps last_seen.
+ */
+export async function verifyReconnectToken(
+  clusterId: string,
+  rawToken: string,
+): Promise<{ clusterId: string; accountId: string }> {
+  const db = supabaseAdmin();
+  const { data: cluster, error } = await db
+    .from('cluster')
+    .select('id, account_id, reconnect_token_hash')
+    .eq('id', clusterId)
+    .maybeSingle();
+  if (error) throw error;
+  if (!cluster || !cluster.reconnect_token_hash) throw new TokenError('unknown cluster');
+  if (!hashesEqual(cluster.reconnect_token_hash, hash(rawToken))) {
+    throw new TokenError('invalid reconnect token');
+  }
+
+  // Re-affirm liveness; a reconnect means the agent is back up.
+  await db
+    .from('cluster')
+    .update({ status: 'connected', last_seen_at: new Date().toISOString() })
+    .eq('id', cluster.id);
+
+  return { clusterId: cluster.id, accountId: cluster.account_id };
 }
 
 /** Cluster status for the onboarding poll (tenant-scoped to the caller). */

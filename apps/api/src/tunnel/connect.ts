@@ -8,10 +8,10 @@ import { TunnelClient, type TunnelHandlers, type TunnelLogger } from './client.j
  */
 export interface ConnectTunnelOptions {
   dial: () => Promise<Transport>;
-  register: { token?: string; clusterId?: string; agentVersion?: string; clusterName?: string };
+  register: { token?: string; clusterId?: string; agentVersion?: string; clusterName?: string; reconnectToken?: string };
   handlers: TunnelHandlers;
   log?: TunnelLogger;
-  onRegistered?: (clusterId: string) => void;
+  onRegistered?: (clusterId: string, reconnectToken?: string) => void;
   sleep?: (ms: number) => Promise<void>;
   backoff?: { baseMs?: number; maxMs?: number };
   /** Return false to stop the loop (shutdown / tests). Defaults to forever. */
@@ -25,6 +25,20 @@ export async function connectTunnel(opts: ConnectTunnelOptions): Promise<void> {
   const baseMs = opts.backoff?.baseMs ?? 1_000;
   const maxMs = opts.backoff?.maxMs ?? 30_000;
   let attempt = 0;
+
+  // First-boot registration returns a durable reconnect token (issue #11). Once
+  // we hold it, switch the register payload to {clusterId, reconnectToken} and
+  // drop the now-consumed single-use install token — so reconnects survive a
+  // tunnel drop instead of looping on "registration rejected". Mutating the
+  // shared `register` object means every subsequent TunnelClient picks it up.
+  const onRegistered = (clusterId: string, reconnectToken?: string): void => {
+    opts.register.clusterId = clusterId;
+    if (reconnectToken) {
+      opts.register.reconnectToken = reconnectToken;
+      delete opts.register.token;
+    }
+    opts.onRegistered?.(clusterId, reconnectToken);
+  };
 
   while (running()) {
     let transport: Transport;
@@ -42,7 +56,7 @@ export async function connectTunnel(opts: ConnectTunnelOptions): Promise<void> {
       register: opts.register,
       handlers: opts.handlers,
       log,
-      onRegistered: opts.onRegistered,
+      onRegistered,
     });
     try {
       await client.start();

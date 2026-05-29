@@ -79,7 +79,9 @@ export class TunnelClient {
         this.clusterId = msg.clusterId;
         this.settled = true;
         this.registeredResolve?.(msg.clusterId);
-        this.opts.onRegistered?.(msg.clusterId);
+        // reconnectToken is present only on the first-boot ack (issue #11); the
+        // reconnect loop captures it so later reconnects skip the install token.
+        this.opts.onRegistered?.(msg.clusterId, msg.reconnectToken);
         this.log('info', 'tunnel registered', { clusterId: msg.clusterId, sessionId: msg.sessionId });
         return;
       case 'command':
@@ -141,10 +143,10 @@ export interface TunnelHandlers {
 
 export interface TunnelClientOptions {
   transport: Transport;
-  register: { token?: string; clusterId?: string; agentVersion?: string; clusterName?: string };
+  register: { token?: string; clusterId?: string; agentVersion?: string; clusterName?: string; reconnectToken?: string };
   handlers: TunnelHandlers;
   log?: TunnelLogger;
-  onRegistered?: (clusterId: string) => void;
+  onRegistered?: (clusterId: string, reconnectToken?: string) => void;
   onClose?: () => void;
 }
 
