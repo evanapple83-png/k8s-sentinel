@@ -21,6 +21,8 @@ export function RunScanButton({ clusterId }: { clusterId: string | null }) {
     if (res.ok) {
       setState('done');
       setTimeout(() => setState('idle'), 5000);
+    } else if (res.reason === 'not-connected') {
+      setState('This cluster isn’t connected — connect its agent first.');
     } else {
       setState(`couldn’t start a scan (${res.reason})`);
     }

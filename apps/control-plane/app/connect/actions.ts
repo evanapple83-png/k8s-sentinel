@@ -104,11 +104,14 @@ export async function triggerScan(clusterId: string): Promise<ScanTriggerResult>
   const db = supabaseAdmin();
   const { data: cluster } = await db
     .from('cluster')
-    .select('id')
+    .select('id, status')
     .eq('id', clusterId)
     .eq('account_id', accountId)
     .maybeSingle();
   if (!cluster) return { ok: false, reason: 'not-found' };
+  // Don't bother the relay (and surface its cryptic "agent offline") for a
+  // cluster whose agent isn't connected — give the caller a clear reason. (F11)
+  if (cluster.status !== 'connected') return { ok: false, reason: 'not-connected' };
 
   const relayUrl = (process.env.RELAY_HTTP_URL ?? '').replace(/\/+$/, '');
   const secret = process.env.RELAY_CONTROL_SECRET;

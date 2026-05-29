@@ -74,7 +74,13 @@ export function ConnectClient() {
   async function scanNow() {
     setScanState('running');
     const res = await triggerScan(clusterId);
-    setScanState(res.ok ? 'done' : `couldn’t start a scan (${res.reason})`);
+    setScanState(
+      res.ok
+        ? 'done'
+        : res.reason === 'not-connected'
+          ? 'This cluster isn’t connected — connect its agent first.'
+          : `couldn’t start a scan (${res.reason})`,
+    );
   }
 
   if (phase === 'connected') {

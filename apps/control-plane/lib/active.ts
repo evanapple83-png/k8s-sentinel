@@ -125,10 +125,13 @@ export async function getActiveData(
       });
     }
 
+    // Explicit ?cluster= wins; otherwise prefer the newest CONNECTED cluster so
+    // the dashboard (and its "Run scan" button) land on a live agent rather than
+    // a stale/ghost cluster from an earlier onboard. Falls back to newest. (F11)
     const activeClusterId =
-      (wantCluster && clusters.some((c) => c.id === wantCluster)
-        ? wantCluster
-        : undefined) ?? clusters[0]!.id;
+      (wantCluster && clusters.some((c) => c.id === wantCluster) ? wantCluster : undefined) ??
+      clusters.find((c) => c.status === 'connected')?.id ??
+      clusters[0]!.id;
 
     const runs = await listRuns(userId, activeAccountId, activeClusterId);
     if (runs.length === 0) {
