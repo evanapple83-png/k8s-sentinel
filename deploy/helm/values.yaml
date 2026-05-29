@@ -9,7 +9,11 @@ image:
   # Bump in lockstep with Chart.appVersion. Pinned scanner versions live in the
   # Dockerfile (apps/api/Dockerfile, TRIVY_VERSION/KUBE_BENCH_VERSION/…).
   tag: "0.2.0-argus-v3"
-  pullPolicy: IfNotPresent
+  # `0.2.0-argus-v3` is a MUTABLE tag (re-pushed on each rebuild), so default to
+  # Always — otherwise a node that cached an earlier build keeps a stale agent
+  # and never picks up fixes/DB updates (F13). Pin to an immutable tag/digest +
+  # IfNotPresent once releases are versioned.
+  pullPolicy: Always
 
 # --- Deployment mode -------------------------------------------------------
 # "cluster-local" (default): the full product + dashboard run inside the
