@@ -2,6 +2,7 @@ import 'server-only';
 import { createHash, randomBytes } from 'node:crypto';
 import { supabaseAdmin } from './supabase/server';
 import { recordAudit, requireRole } from './data';
+import { chartOciRef, chartVersion } from './chart';
 import type { Cluster } from './types';
 
 /**
@@ -149,7 +150,8 @@ export async function getClusterStatus(
 export function helmInstallCommand(token: string): string {
   const relay = process.env.RELAY_URL ?? 'wss://relay.k8s-sentinel.example';
   return [
-    'helm install sentinel oci://ghcr.io/your-org/k8s-sentinel \\',
+    `helm install sentinel ${chartOciRef()} \\`,
+    `  --version ${chartVersion()} \\`,
     '  --namespace sentinel --create-namespace \\',
     '  --set mode=hybrid \\',
     `  --set relay.url=${relay} \\`,

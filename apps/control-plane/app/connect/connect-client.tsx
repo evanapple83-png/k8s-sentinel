@@ -8,13 +8,14 @@ import { Button, buttonVariants } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { generateInstall, pollConnection, triggerScan } from './actions';
 
-type Phase = 'loading' | 'ready' | 'connected' | 'forbidden' | 'error';
+type Phase = 'loading' | 'ready' | 'connected' | 'forbidden' | 'error' | 'unpublished';
 
 export function ConnectClient() {
   const [phase, setPhase] = useState<Phase>('loading');
   const [command, setCommand] = useState('');
   const [clusterName, setClusterName] = useState('');
   const [clusterId, setClusterId] = useState('');
+  const [chartError, setChartError] = useState<{ chart: string; message: string } | null>(null);
   const [scanState, setScanState] = useState<'idle' | 'running' | 'done' | string>('idle');
   const [copied, setCopied] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -26,9 +27,15 @@ export function ConnectClient() {
 
   const generate = useCallback(async () => {
     setPhase('loading');
+    setChartError(null);
     const res = await generateInstall();
     if (!res.ok) {
-      setPhase(res.reason === 'forbidden' ? 'forbidden' : 'error');
+      if (res.reason === 'chart-unpublished') {
+        setChartError({ chart: res.chart, message: res.message });
+        setPhase('unpublished');
+      } else {
+        setPhase(res.reason === 'forbidden' ? 'forbidden' : 'error');
+      }
       return;
     }
     setCommand(res.command);
@@ -105,6 +112,30 @@ export function ConnectClient() {
                 : scanState}
             </p>
           )}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (phase === 'unpublished' && chartError) {
+    return (
+      <Card>
+        <CardContent className="space-y-3 p-6">
+          <div className="flex items-start gap-3">
+            <ShieldAlert className="mt-0.5 size-5 shrink-0 text-warn" />
+            <div className="space-y-1">
+              <div className="text-sm font-medium text-foreground">
+                Install command unavailable
+              </div>
+              <p className="text-sm text-muted-foreground">{chartError.message}</p>
+              <p className="text-xs text-muted-foreground">
+                Expected chart at <span className="font-mono">{chartError.chart}</span>
+              </p>
+            </div>
+          </div>
+          <Button variant="ghost" size="sm" onClick={generate}>
+            Retry
+          </Button>
         </CardContent>
       </Card>
     );

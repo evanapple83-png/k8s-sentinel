@@ -1,6 +1,7 @@
 import 'server-only';
 import { supabaseAdmin } from './supabase/server';
 import { AccessError, recordAudit, requireMembership, requireRole } from './data';
+import { chartOciRef } from './chart';
 
 /** Confirm a cluster id actually belongs to the account before touching it. */
 async function assertClusterInAccount(accountId: string, clusterId: string): Promise<void> {
@@ -117,7 +118,7 @@ kubectl create clusterrolebinding sentinel-readonly-logs \\
       'Deploy the Falco DaemonSet to watch syscalls for live attack behaviour. Requires privileged host access on each node — medium risk, isolated to the detection sidecar.',
     risk: 'medium',
     scope: 'cluster',
-    snippet: `helm upgrade sentinel oci://ghcr.io/your-org/k8s-sentinel \\
+    snippet: `helm upgrade sentinel ${chartOciRef()} \\
   --reuse-values --set falco.enabled=true`,
   },
   {

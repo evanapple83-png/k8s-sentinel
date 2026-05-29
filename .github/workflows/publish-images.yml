@@ -17,6 +17,7 @@ on:
       - 'argus/**'
       - 'requirements.txt'
       - 'pnpm-lock.yaml'
+      - 'deploy/helm/**'
       - '.github/workflows/publish-images.yml'
     tags: ['v*']
   workflow_dispatch: {}
@@ -64,3 +65,36 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Publishes the Helm chart as an OCI artifact so the Connect screen's
+  # `helm install oci://ghcr.io/<owner>/k8s-sentinel --version <x>` resolves.
+  # Same package as the agent image, but tagged by CHART version (Chart.yaml
+  # `version:`, e.g. 0.2.0) — no overlap with the image's appVersion tags
+  # (0.2.0-argus-v3 / argus-v3 / latest), so the two artifact types coexist and
+  # the chart inherits the package's (public) visibility. The Connect screen
+  # verifies the pushed artifact is a Helm chart before showing the command.
+  helm-chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Lint chart
+        run: helm lint deploy/helm
+
+      - name: Log in to ghcr.io (Helm OCI)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: Package & push chart
+        run: |
+          set -euo pipefail
+          owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          helm package deploy/helm -d dist
+          chart=$(ls dist/*.tgz)
+          echo "Pushing $chart → oci://ghcr.io/$owner"
+          helm push "$chart" "oci://ghcr.io/$owner"
