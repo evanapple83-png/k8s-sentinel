@@ -20,3 +20,16 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- define "k8s-sentinel.serviceAccountName" -}}
 {{- printf "%s-sa" (include "k8s-sentinel.fullname" .) -}}
 {{- end -}}
+
+{{- /*
+Agent image reference. Prefer an immutable digest (set by CI at chart-publish
+time → fully reproducible, IfNotPresent-safe); fall back to the mutable tag for
+local/dev. (F13)
+*/ -}}
+{{- define "k8s-sentinel.image" -}}
+{{- if .Values.image.digest -}}
+{{- printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{- else -}}
+{{- printf "%s:%s" .Values.image.repository .Values.image.tag -}}
+{{- end -}}
+{{- end -}}

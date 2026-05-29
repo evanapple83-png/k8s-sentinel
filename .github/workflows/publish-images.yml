@@ -29,6 +29,10 @@ permissions:
 jobs:
   agent-image:
     runs-on: ubuntu-latest
+    outputs:
+      # Immutable manifest-list digest of the image built this run; the chart job
+      # pins the chart to it so the published chart is fully reproducible. (F13)
+      digest: ${{ steps.build.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
 
@@ -60,6 +64,7 @@ jobs:
             type=sha,format=short
 
       - name: Build & push
+        id: build
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -83,6 +88,8 @@ jobs:
   # verifies the pushed artifact is a Helm chart before showing the command.
   helm-chart:
     runs-on: ubuntu-latest
+    # Wait for the image so we can pin the chart to its immutable digest.
+    needs: agent-image
     steps:
       - uses: actions/checkout@v4
 
@@ -92,6 +99,18 @@ jobs:
 
       - name: Lint chart
         run: helm lint deploy/helm
+
+      - name: Pin chart to the image digest (F13 — immutable, reproducible)
+        env:
+          DIGEST: ${{ needs.agent-image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DIGEST:-}" ]; then echo "no image digest from agent-image job" >&2; exit 1; fi
+          echo "Pinning image.digest=${DIGEST}"
+          # values.yaml ships `digest: ""`; replace with the just-built digest so
+          # the published chart references the image by digest, not the mutable tag.
+          sed -i "s|^  digest: \"\"|  digest: \"${DIGEST}\"|" deploy/helm/values.yaml
+          grep -n "digest:" deploy/helm/values.yaml
 
       - name: Log in to ghcr.io (Helm OCI)
         run: |
