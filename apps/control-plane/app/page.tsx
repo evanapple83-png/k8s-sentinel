@@ -1,7 +1,6 @@
 import Link from 'next/link';
 import { ArrowUpRight } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
 import { RiskRing, rating } from '@/components/risk-ring';
 import { Stat, Bar, IntelBanner, ChokePointsPanel } from '@/components/bits';
 import { EmptyState } from '@/components/placeholder';
@@ -10,6 +9,7 @@ import type { Severity } from '@/lib/types';
 import { getActiveData, type SearchParamsInput } from '@/lib/active';
 import { DEMO_PREV_RUN } from '@/lib/mock';
 import { WhyThisFix } from './why-this-fix';
+import { RunScanButton } from './run-scan-button';
 
 const SEV_ORDER: Severity[] = ['critical', 'high', 'medium', 'low', 'info'];
 const SEV_TONE: Record<Severity, string> = {
@@ -96,7 +96,7 @@ export default async function OverviewPage({
             {clusterName} · scanned {fmt(run.createdAt)} · engine {run.engine}
           </p>
         </div>
-        <Button>Run scan</Button>
+        <RunScanButton clusterId={data.demo ? null : data.activeClusterId ?? run.clusterId} />
       </header>
 
       <IntelBanner intel={run.intel} />
