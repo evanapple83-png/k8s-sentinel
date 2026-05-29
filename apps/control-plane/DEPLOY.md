@@ -105,10 +105,13 @@ Apply migration `0004` (`supabase db push`) so remediations persist.
 ### d. Install the agent (hybrid mode)
 
 The Connect screen mints a single-use install token and prints the Helm
-command. With mTLS, also pass the cert Secret from step (b):
+command. The chart path comes from `SENTINEL_CHART_REF` (default
+`ghcr.io/evanapple83-png/k8s-sentinel`) — the screen verifies a chart is
+actually published there before showing the command. With mTLS, also pass the
+cert Secret from step (b):
 
 ```bash
-helm install sentinel oci://ghcr.io/your-org/k8s-sentinel \
+helm install sentinel oci://$SENTINEL_CHART_REF --version $SENTINEL_CHART_VERSION \
   -n sentinel --create-namespace --set mode=hybrid \
   --set relay.url=wss://<relay-host> \
   --set relay.clientCertSecret=sentinel-relay-cert

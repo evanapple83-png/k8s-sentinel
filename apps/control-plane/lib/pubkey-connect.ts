@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { supabaseAdmin } from './supabase/server';
 import { AccessError, ingestSnapshot, recordAudit, requireMembership } from './data';
 import { mapToPostureSnapshot, type ArgusReportJson } from './argus-mapper';
+import { chartOciRef, chartVersion } from './chart';
 import { PostureSnapshotSchema } from './wire';
 
 /**
@@ -201,7 +202,8 @@ function trimSlash(url: string): string {
 export function buildHelmCommand(rawToken: string): string {
   const relay = process.env.RELAY_URL ?? 'wss://relay.k8s-sentinel.example';
   return [
-    'helm install sentinel oci://ghcr.io/your-org/k8s-sentinel \\',
+    `helm install sentinel ${chartOciRef()} \\`,
+    `  --version ${chartVersion()} \\`,
     '  --namespace sentinel --create-namespace \\',
     '  --set mode=hybrid \\',
     `  --set relay.url=${relay} \\`,

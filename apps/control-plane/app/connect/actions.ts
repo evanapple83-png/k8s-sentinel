@@ -5,10 +5,12 @@ import { authEnabled } from '@/auth.config';
 import { supabaseAdmin, supabaseConfigured } from '@/lib/supabase/server';
 import { requireMembership, requireRole } from '@/lib/data';
 import { helmInstallCommand, mintInstallToken } from '@/lib/install-tokens';
+import { verifyChartPublished, chartOciRef, chartVersion } from '@/lib/chart';
 
 export type GenerateResult =
   | { ok: true; command: string; expiresAt: string }
-  | { ok: false; reason: 'demo' | 'forbidden' | 'no-account' };
+  | { ok: false; reason: 'demo' | 'forbidden' | 'no-account' }
+  | { ok: false; reason: 'chart-unpublished'; chart: string; message: string };
 
 /** Mint a fresh install token (admin only) and return the copy-paste command. */
 export async function generateInstall(): Promise<GenerateResult> {
@@ -17,6 +19,14 @@ export async function generateInstall(): Promise<GenerateResult> {
   const userId = session?.user?.id;
   const accountId = session?.user?.activeAccountId;
   if (!userId || !accountId) return { ok: false, reason: 'no-account' };
+
+  // Don't hand out a copy-paste command that would fail in the operator's shell:
+  // confirm a Helm chart is actually published at the configured path first.
+  const chart = `${chartOciRef()}:${chartVersion()}`;
+  const published = await verifyChartPublished();
+  if (!published.ok) {
+    return { ok: false, reason: 'chart-unpublished', chart, message: chartErrorMessage(published) };
+  }
 
   try {
     const { token, expiresAt } = await mintInstallToken(
@@ -27,6 +37,17 @@ export async function generateInstall(): Promise<GenerateResult> {
     return { ok: true, command: helmInstallCommand(token), expiresAt };
   } catch {
     return { ok: false, reason: 'forbidden' };
+  }
+}
+
+function chartErrorMessage(r: { reason: 'not-published' | 'not-a-chart' | 'unreachable'; detail?: string }): string {
+  switch (r.reason) {
+    case 'not-published':
+      return 'No Helm chart is published at this path yet. Publish the chart (or set SENTINEL_CHART_REF / SENTINEL_CHART_VERSION to the real one) before connecting a cluster.';
+    case 'not-a-chart':
+      return `The registry path holds a container image, not a Helm chart${r.detail ? ` (found ${r.detail})` : ''}. Point SENTINEL_CHART_REF at the published chart artifact.`;
+    case 'unreachable':
+      return 'Could not reach the chart registry to confirm the chart exists. Check connectivity and try again.';
   }
 }
 
