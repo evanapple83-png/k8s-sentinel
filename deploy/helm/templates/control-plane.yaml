@@ -9,6 +9,12 @@ metadata:
     {{- include "k8s-sentinel.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.controlPlane.replicas }}
+  {{- if .Values.persistence.enabled }}
+  # The reconnect-identity PVC is ReadWriteOnce; Recreate avoids two pods
+  # contending for it during a rollout (single replica anyway).
+  strategy:
+    type: Recreate
+  {{- end }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "k8s-sentinel.name" . }}
@@ -95,6 +101,11 @@ spec:
               value: {{ required "relay.url is required when mode=hybrid" .Values.relay.url | quote }}
             - name: SENTINEL_CLUSTER_NAME
               value: {{ .Release.Name | quote }}
+            # Persist the reconnect identity (issue #11 Phase 2). /app/data is
+            # writable (emptyDir → survives container restarts; PVC when
+            # persistence.enabled → survives pod reschedules).
+            - name: SENTINEL_STATE_DIR
+              value: /app/data
             {{- if .Values.relay.installTokenSecret }}
             - name: SENTINEL_INSTALL_TOKEN
               valueFrom:
@@ -143,7 +154,12 @@ spec:
         - name: tmp
           emptyDir: {}
         - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "k8s-sentinel.fullname" . }}-data
+          {{- else }}
           emptyDir: {}
+          {{- end }}
         {{- if and (eq .Values.mode "hybrid") .Values.relay.clientCertSecret }}
         - name: relay-certs
           secret:

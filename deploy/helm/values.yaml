@@ -105,6 +105,15 @@ controlPlane:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
 
+# Durable agent state (hybrid mode, issue #11 Phase 2). The agent persists its
+# reconnect identity to /app/data. As an emptyDir (default) that survives
+# container restarts; enable a PVC to also survive pod reschedules (node drain,
+# eviction, rollout). RWO + the Deployment's Recreate strategy (single replica).
+persistence:
+  enabled: false
+  size: 1Gi
+  storageClass: "" # "" = cluster default StorageClass
+
 # Hardened pod defaults applied to every workload.
 podSecurityContext:
   runAsNonRoot: true
