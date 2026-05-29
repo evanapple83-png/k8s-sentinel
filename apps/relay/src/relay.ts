@@ -173,13 +173,16 @@ export class Relay {
     conn.clusterId = clusterId;
     conn.sessionId = this.genId();
 
-    // Newest agent for a cluster wins (re-deploy / pod restart); retire the old one.
+    // Newest agent for a cluster wins (re-deploy / pod restart); retire the old
+    // one. Register the new conn BEFORE closing the old, so the old conn's
+    // onClose guard (agents.get === conn) sees the new agent and does NOT fire a
+    // spurious onAgentDisconnect for a cluster that's actually still live. (F1)
     const prev = this.agents.get(clusterId);
+    this.agents.set(clusterId, conn);
     if (prev && prev !== conn) {
       prev.sendMsg({ t: 'bye', reason: 'superseded by a newer agent' });
       prev.transport.close();
     }
-    this.agents.set(clusterId, conn);
     conn.sendMsg({
       t: 'registered',
       clusterId,
@@ -288,9 +291,12 @@ export class Relay {
 
   private onClose(conn: Conn): void {
     if (conn.role === 'agent' && conn.clusterId) {
+      // Only when THIS conn is still the registered agent (not a superseded one,
+      // which would wrongly flip a freshly-reconnected cluster to disconnected).
       if (this.agents.get(conn.clusterId) === conn) {
         this.agents.delete(conn.clusterId);
         this.log('info', 'agent disconnected', { clusterId: conn.clusterId });
+        void this.deps.onAgentDisconnect?.(conn.clusterId); // F1: flip cluster status
       }
     } else if (conn.role === 'control' && conn.clusterId) {
       const set = this.controls.get(conn.clusterId);
@@ -330,6 +336,10 @@ export interface RelayDeps {
    * relay stays a pure forwarder when no hosted plane is configured.
    */
   onSnapshot?(clusterId: string, snapshot: PostureSnapshot): void | Promise<void>;
+  /** Invoked when a registered agent's tunnel closes (and is not superseded).
+   *  The server wires this to the control plane so cluster.status flips to
+   *  disconnected — no ghost "connected" clusters. (F1) */
+  onAgentDisconnect?(clusterId: string): void | Promise<void>;
   now?: () => number;
   genId?: () => string;
   log?: RelayLogger;

@@ -169,6 +169,21 @@ export async function verifyReconnectToken(
   return { clusterId: cluster.id, accountId: cluster.account_id };
 }
 
+/**
+ * Flip a cluster to `disconnected` when the relay reports its agent dropped (F1).
+ * Guarded to `connected` rows so it's idempotent and won't disturb pending/other
+ * states. No session — called by the relay, authed by the shared ingest secret.
+ */
+export async function markClusterDisconnected(clusterId: string): Promise<void> {
+  const db = supabaseAdmin();
+  const { error } = await db
+    .from('cluster')
+    .update({ status: 'disconnected' })
+    .eq('id', clusterId)
+    .eq('status', 'connected');
+  if (error) throw error;
+}
+
 /** Cluster status for the onboarding poll (tenant-scoped to the caller). */
 export async function getClusterStatus(
   userId: string,

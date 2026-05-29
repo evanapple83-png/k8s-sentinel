@@ -102,51 +102,53 @@ export async function triggerScan(clusterId: string): Promise<ScanTriggerResult>
   }
 
   const db = supabaseAdmin();
-  const { data: cluster } = await db
-    .from('cluster')
-    .select('id, status')
-    .eq('id', clusterId)
-    .eq('account_id', accountId)
-    .maybeSingle();
-  if (!cluster) return { ok: false, reason: 'not-found' };
-  // Don't bother the relay (and surface its cryptic "agent offline") for a
-  // cluster whose agent isn't connected — give the caller a clear reason. (F11)
-  if (cluster.status !== 'connected') return { ok: false, reason: 'not-connected' };
-
   const relayUrl = (process.env.RELAY_HTTP_URL ?? '').replace(/\/+$/, '');
   const secret = process.env.RELAY_CONTROL_SECRET;
   if (!relayUrl || !secret) return { ok: false, reason: 'relay-not-configured' };
 
-  // The agent's tunnel briefly drops during reconnects (idle/half-open ~tens of
-  // seconds). A scan command arriving in that window hits "agent offline". For
-  // reliability, retry across the gap: agent-offline / relay-unreachable are
-  // transient and fail fast, so retrying ~60s covers a reconnect without making
-  // the happy path slower (a connected agent answers on the first attempt).
+  // Reliability (triggerScan v2): an agent's tunnel briefly drops during a
+  // reconnect (idle/half-open), and with F1 the cluster.status flips to
+  // disconnected for those seconds. Both that and the relay's "agent offline"
+  // are transient. Retry the WHOLE thing — re-reading status each round — for
+  // ~60s so a scan ridden over a reconnect still lands. A genuinely dead
+  // ("ghost") cluster stays disconnected the whole budget → clear `not-connected`.
+  // The happy path (connected agent) succeeds on the first iteration.
   const RETRY_BUDGET_MS = 60_000;
   const RETRY_DELAY_MS = 4_000;
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
   const deadline = Date.now() + RETRY_BUDGET_MS;
-  let lastReason = 'agent offline';
+  let lastReason = 'not-connected';
 
   while (true) {
-    try {
-      const res = await fetch(`${relayUrl}/command`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
-        body: JSON.stringify({ clusterId, kind: 'scan' }),
-      });
-      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; data?: { runId?: string } };
-      if (res.ok && body.ok !== false) return { ok: true, runId: body.data?.runId };
-      lastReason = body.error ?? `relay ${res.status}`;
-      // Only "agent offline" is worth retrying (transient reconnect window);
-      // anything else (bad secret, 4xx) is terminal.
-      if (lastReason !== 'agent offline' || Date.now() + RETRY_DELAY_MS >= deadline) {
-        return { ok: false, reason: lastReason };
+    const { data: cluster } = await db
+      .from('cluster')
+      .select('id, status')
+      .eq('id', clusterId)
+      .eq('account_id', accountId)
+      .maybeSingle();
+    if (!cluster) return { ok: false, reason: 'not-found' }; // genuinely gone — no retry
+
+    if (cluster.status === 'connected') {
+      try {
+        const res = await fetch(`${relayUrl}/command`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+          body: JSON.stringify({ clusterId, kind: 'scan' }),
+        });
+        const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; data?: { runId?: string } };
+        if (res.ok && body.ok !== false) return { ok: true, runId: body.data?.runId };
+        lastReason = body.error ?? `relay ${res.status}`;
+        // Only the transient reconnect-window error is worth retrying; anything
+        // else (bad secret, 4xx) is terminal.
+        if (lastReason !== 'agent offline') return { ok: false, reason: lastReason };
+      } catch {
+        lastReason = 'relay-unreachable';
       }
-    } catch {
-      lastReason = 'relay-unreachable';
-      if (Date.now() + RETRY_DELAY_MS >= deadline) return { ok: false, reason: lastReason };
+    } else {
+      lastReason = 'not-connected'; // brief reconnect gap (F1) — retry; ghost → returned after budget
     }
+
+    if (Date.now() + RETRY_DELAY_MS >= deadline) return { ok: false, reason: lastReason };
     await sleep(RETRY_DELAY_MS);
   }
 }

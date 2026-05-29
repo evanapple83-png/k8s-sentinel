@@ -23,7 +23,10 @@ const PORT = Number(process.env.PORT ?? (hasTls() ? 8443 : 8080));
 const CONTROL_SECRET = process.env.RELAY_CONTROL_SECRET ?? '';
 const CONTROL_PLANE_URL = (process.env.CONTROL_PLANE_URL ?? '').replace(/\/+$/, '');
 const INGEST_SECRET = process.env.RELAY_INGEST_SECRET ?? '';
-const IDLE_MS = Number(process.env.RELAY_IDLE_MS ?? 90_000);
+const IDLE_MS = Number(process.env.RELAY_IDLE_MS ?? 60_000);
+
+/** ws socket tagged with heartbeat liveness (F16). */
+type HeartbeatWs = WebSocket & { isAlive?: boolean };
 
 const log = (level: 'info' | 'warn' | 'error', msg: string, meta?: Record<string, unknown>) =>
   console[level === 'error' ? 'error' : 'log'](
@@ -34,6 +37,7 @@ const relay = new Relay({
   verifyAgent,
   authorizeControl,
   onSnapshot: ingestToControlPlane,
+  onAgentDisconnect: notifyDisconnect,
   log,
 });
 
@@ -42,6 +46,25 @@ const relay = new Relay({
  * webhook. The relay persists nothing locally — it relays the payload onward,
  * authenticated by a shared secret. No-op when no control plane is configured.
  */
+/**
+ * Tell the control plane an agent's tunnel dropped so it flips cluster.status to
+ * disconnected (no ghost "connected" clusters that scans would target). Shares
+ * the ingest secret. Best-effort — a missed notify self-corrects on reconnect
+ * (register re-marks connected) or the next disconnect. (F1)
+ */
+async function notifyDisconnect(clusterId: string): Promise<void> {
+  if (!CONTROL_PLANE_URL || !INGEST_SECRET) return;
+  try {
+    await fetch(`${CONTROL_PLANE_URL}/api/agent/disconnect`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${INGEST_SECRET}` },
+      body: JSON.stringify({ clusterId }),
+    });
+  } catch (e) {
+    log('warn', 'disconnect notify failed', { err: String(e), clusterId });
+  }
+}
+
 async function ingestToControlPlane(clusterId: string, snapshot: unknown): Promise<void> {
   if (!CONTROL_PLANE_URL || !INGEST_SECRET) return;
   const res = await fetch(`${CONTROL_PLANE_URL}/api/agent/ingest`, {
@@ -161,6 +184,16 @@ const server = hasTls()
 const wss = new WebSocketServer({ server, maxPayload: 8 * 1024 * 1024 });
 
 wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+  // F16: TCP-level liveness. A half-open socket (Fly edge drop, network blip)
+  // is invisible to the app protocol — pings stop arriving but the socket lingers
+  // until the idle sweep (~minute+), during which a command routed to it HANGS to
+  // the 120s timeout. The heartbeat below terminates such sockets within ~30s so
+  // the relay's agent registry stays accurate and dead clusters fail fast.
+  (ws as HeartbeatWs).isAlive = true;
+  ws.on('pong', () => {
+    (ws as HeartbeatWs).isAlive = true;
+  });
+
   const ctx: ConnContext = { remote: req.socket.remoteAddress ?? undefined };
 
   // Control plane presents a bearer; agents send their token in the register frame.
@@ -181,12 +214,34 @@ wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
   relay.accept(wsTransport(ws), ctx);
 });
 
-// Liveness: evict idle connections; the protocol's ping/pong keeps live ones fresh.
+// Liveness (app-level backstop): evict connections idle past IDLE_MS.
 const sweepTimer = setInterval(() => {
   const evicted = relay.sweep(IDLE_MS);
   if (evicted) log('info', 'swept idle connections', { evicted, ...relay.stats() });
 }, Math.max(15_000, Math.floor(IDLE_MS / 3)));
 sweepTimer.unref?.();
+
+// F16: TCP-level heartbeat. Ping every HEARTBEAT_MS; a socket that misses two
+// rounds (no pong) is half-open → terminate it (fires 'close' → relay evicts the
+// agent + flips cluster.status via onAgentDisconnect). Far faster than the idle
+// sweep, so commands never route to a dead socket and hang.
+const HEARTBEAT_MS = Number(process.env.RELAY_HEARTBEAT_MS ?? 15_000);
+const heartbeatTimer = setInterval(() => {
+  for (const client of wss.clients) {
+    const ws = client as HeartbeatWs;
+    if (ws.isAlive === false) {
+      ws.terminate();
+      continue;
+    }
+    ws.isAlive = false;
+    try {
+      ws.ping();
+    } catch {
+      /* socket already going away */
+    }
+  }
+}, HEARTBEAT_MS);
+heartbeatTimer.unref?.();
 
 server.listen(PORT, () => {
   log('info', 'relay listening', { port: PORT, tls: hasTls(), mtls: Boolean(process.env.RELAY_CLIENT_CA) });
@@ -196,6 +251,7 @@ for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, () => {
     log('info', 'shutting down', { sig });
     clearInterval(sweepTimer);
+    clearInterval(heartbeatTimer);
     wss.close();
     server.close(() => process.exit(0));
   });

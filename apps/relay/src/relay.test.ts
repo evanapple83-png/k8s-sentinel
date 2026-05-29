@@ -23,6 +23,9 @@ class Client {
   last(): Message | undefined {
     return this.frames.at(-1);
   }
+  close(): void {
+    this.transport.close();
+  }
   ofType<T extends Message['t']>(t: T): Extract<Message, { t: T }>[] {
     return this.frames.filter((f): f is Extract<Message, { t: T }> => f.t === t);
   }
@@ -90,6 +93,37 @@ describe('relay identity', () => {
     agent.send({ t: 'register', protocol: 1, token: 'ok-cluster-a' });
     await flush();
     expect(agent.last()).toEqual({ t: 'registered', clusterId: 'cluster-a', sessionId: 'sess-0' });
+  });
+
+  it('fires onAgentDisconnect when a registered agent drops (F1)', async () => {
+    const dropped: string[] = [];
+    const relay = makeRelay({ onAgentDisconnect: (id) => void dropped.push(id) });
+    const agent = connect(relay);
+    agent.send({ t: 'register', protocol: 1, token: 'ok-cluster-a' });
+    await flush();
+    expect(relay.stats().agents).toBe(1);
+
+    agent.close();
+    await flush();
+    expect(dropped).toEqual(['cluster-a']);
+    expect(relay.stats().agents).toBe(0);
+  });
+
+  it('does NOT fire onAgentDisconnect for a superseded agent (F1 guard)', async () => {
+    const dropped: string[] = [];
+    const relay = makeRelay({ onAgentDisconnect: (id) => void dropped.push(id) });
+    const a1 = connect(relay);
+    a1.send({ t: 'register', protocol: 1, token: 'ok-cluster-a' });
+    await flush();
+    // a2 registers for the same cluster → supersedes a1 (relay closes a1).
+    const a2 = connect(relay);
+    a2.send({ t: 'register', protocol: 1, token: 'ok-cluster-a' });
+    await flush();
+    expect(dropped).toEqual([]); // a1's close must not flip the (now a2-owned) cluster
+
+    a2.close();
+    await flush();
+    expect(dropped).toEqual(['cluster-a']); // the live agent dropping does
   });
 
   it('subscribes an authorized control', async () => {
