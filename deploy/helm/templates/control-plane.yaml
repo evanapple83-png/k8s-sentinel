@@ -64,6 +64,18 @@ spec:
             - name: ARGUS_ACCEPTED_RISKS_DIR
               value: /etc/sentinel/accepted-risks
             {{- end }}
+            # Writable cache dirs for the scanners. The container runs
+            # readOnlyRootFilesystem, so every tool that downloads a DB / caches
+            # artifacts must write under the /tmp emptyDir, not /app or $HOME.
+            # (F12: scans crashed with "Read-only file system".)
+            - name: HOME
+              value: /tmp                       # kubescape (~/.kubescape), generic $HOME caches
+            - name: XDG_CACHE_HOME
+              value: /tmp/.cache
+            - name: TRIVY_CACHE_DIR
+              value: /tmp/trivy                 # Trivy vuln-DB download
+            - name: ARGUS_CACHE_DIR
+              value: /tmp/argus-cache           # ARGUS threat-intel cache
             - name: CLUSTER_NAME
               value: {{ .Release.Name | quote }}
             {{- if eq .Values.engine.kind "hermes" }}

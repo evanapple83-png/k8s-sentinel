@@ -19,7 +19,10 @@ import json, os, time, urllib.request
 HERE = os.path.dirname(os.path.abspath(__file__))
 KEV_URL = "https://raw.githubusercontent.com/cisagov/kev-data/develop/known_exploited_vulnerabilities.json"
 EPSS_API = "https://api.first.org/data/v1/epss"
-CACHE = os.path.join(HERE, "cache", "threat-intel-cache.json")
+# Cache dir is overridable so the agent can point it at a writable volume:
+# the in-cluster image runs readOnlyRootFilesystem, so HERE/cache (under /app)
+# is NOT writable. The chart sets ARGUS_CACHE_DIR=/tmp/... (issue: F12).
+CACHE = os.path.join(os.environ.get("ARGUS_CACHE_DIR") or os.path.join(HERE, "cache"), "threat-intel-cache.json")
 OVERRIDE = os.path.join(HERE, "fixtures", "threat-intel-override.json")
 TTL = 24 * 3600
 
