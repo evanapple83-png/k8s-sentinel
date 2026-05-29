@@ -155,7 +155,7 @@ export function helmInstallCommand(token: string): string {
     '  --namespace sentinel --create-namespace \\',
     '  --set mode=hybrid \\',
     `  --set relay.url=${relay} \\`,
-    `  --set installToken=${token}`,
+    `  --set relay.installToken=${token}`,
   ].join('\n');
 }
 

@@ -207,7 +207,7 @@ export function buildHelmCommand(rawToken: string): string {
     '  --namespace sentinel --create-namespace \\',
     '  --set mode=hybrid \\',
     `  --set relay.url=${relay} \\`,
-    `  --set installToken=${rawToken}`,
+    `  --set relay.installToken=${rawToken}`,
   ].join('\n');
 }
 
