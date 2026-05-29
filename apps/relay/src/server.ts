@@ -158,6 +158,18 @@ async function handleCommand(req: IncomingMessage, res: ServerResponse): Promise
       if (!clusterId || (kind !== 'scan' && kind !== 'ask' && kind !== 'approve' && kind !== 'report')) {
         return sendJson(400, { error: 'clusterId and a valid kind are required' });
       }
+      // HA (F7): the agent's WS tunnel lives on exactly one machine, but Fly
+      // load-balances this POST across all of them. If the agent isn't on THIS
+      // machine, ask Fly to replay the request elsewhere — the machine holding
+      // the tunnel will handle it. `fly-replay-src` is set by Fly on a replayed
+      // request, so we bounce at most once (optimal for 2 machines; a shared
+      // backplane would be needed for >2). A genuinely offline agent falls
+      // through to sendCommand → "agent offline".
+      if (!relay.hasAgent(clusterId) && !req.headers['fly-replay-src']) {
+        res.writeHead(202, { 'fly-replay': 'elsewhere=true' });
+        res.end();
+        return;
+      }
       const params = body.params && typeof body.params === 'object' ? (body.params as Record<string, unknown>) : undefined;
       const result = await relay.sendCommand(clusterId, kind, params);
       sendJson(result.ok ? 200 : 502, result);

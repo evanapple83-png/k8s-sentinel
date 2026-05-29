@@ -24,7 +24,7 @@ primary_region = "ams"
   force_https = true
   auto_stop_machines = "off"   # keep tunnels alive; do not idle-stop
   auto_start_machines = true
-  min_machines_running = 1
+  min_machines_running = 2      # HA (F7): 2 machines; /command fly-replays to the one holding the agent
 
   # WebSocket connections are long-lived; the relay's own ping/pong + idle sweep
   # handle liveness. Health is the plain HTTP /healthz.
