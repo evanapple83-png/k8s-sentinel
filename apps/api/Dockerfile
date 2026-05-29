@@ -88,7 +88,7 @@ RUN set -eux; \
 RUN set -eux; \
     case "${TARGETARCH:-amd64}" in \
       amd64) ks_asset="kubescape-ubuntu-latest" ;; \
-      arm64) ks_asset="kubescape-ubuntu-22.04" ;; \
+      arm64) ks_asset="kubescape-arm64-ubuntu-latest" ;; \
       *)     echo "unsupported arch: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     curl -fsSL "https://github.com/kubescape/kubescape/releases/download/v${KUBESCAPE_VERSION}/${ks_asset}" \
