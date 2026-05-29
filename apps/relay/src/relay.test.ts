@@ -126,6 +126,19 @@ describe('relay identity', () => {
     expect(dropped).toEqual(['cluster-a']); // the live agent dropping does
   });
 
+  it('hasAgent reflects local tunnel ownership (F7 fly-replay routing)', async () => {
+    const relay = makeRelay();
+    expect(relay.hasAgent('cluster-a')).toBe(false);
+    const agent = connect(relay);
+    agent.send({ t: 'register', protocol: 1, token: 'ok-cluster-a' });
+    await flush();
+    expect(relay.hasAgent('cluster-a')).toBe(true);
+    expect(relay.hasAgent('cluster-b')).toBe(false);
+    agent.close();
+    await flush();
+    expect(relay.hasAgent('cluster-a')).toBe(false);
+  });
+
   it('subscribes an authorized control', async () => {
     const control = connect(relay, { authToken: 'trusted' });
     control.send({ t: 'subscribe', clusterId: 'cluster-a' });

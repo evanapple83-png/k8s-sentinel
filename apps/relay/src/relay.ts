@@ -62,6 +62,13 @@ export class Relay {
     transport.onClose(() => this.onClose(conn));
   }
 
+  /** Whether this relay instance currently holds the agent tunnel for a cluster.
+   *  Used by the HTTP command bridge to decide whether to fly-replay to another
+   *  machine in an HA (multi-machine) deployment. (F7) */
+  hasAgent(clusterId: string): boolean {
+    return this.agents.has(clusterId);
+  }
+
   /** Live counts (for health/metrics + tests). Never exposes payloads. */
   stats(): { agents: number; controlConnections: number; clusters: number } {
     let controlConnections = 0;
