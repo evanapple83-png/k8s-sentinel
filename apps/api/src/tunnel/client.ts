@@ -29,8 +29,8 @@ import {
  *  tunnels (~105s) and a half-open TCP socket is otherwise invisible to us, so
  *  a periodic ping both refreshes the relay's idle timer and — via the missing
  *  pong — lets us detect a stale connection and reconnect. (issue #11 / F6.) */
-const PING_INTERVAL_MS = 30_000;
-const STALE_AFTER_MS = 95_000;
+const PING_INTERVAL_MS = 20_000;
+const STALE_AFTER_MS = 50_000;
 
 export class TunnelClient {
   private clusterId?: string;

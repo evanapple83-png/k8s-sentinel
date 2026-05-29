@@ -142,7 +142,9 @@ export function mapToPostureSnapshot(report: ArgusReportJson): PostureSnapshot {
   const paths = mapPaths(report.paths ?? {}, workloadById);
   const chokePoints = mapChokePointsTyped(report.chokePoints ?? [], report.reachableJewels ?? []);
   const remediations = mapChokePointsToRemediations(chokePoints);
-  const run = buildRunRecord(report);
+  // findingCount must reflect ALL findings (incl. the non-CVE kube-bench/
+  // kubescape ones surfaced above), not just the engine's CVE-correlated set. (F17)
+  const run = { ...buildRunRecord(report), findingCount: findings.length };
   const intel = mapIntel(report.intel);
 
   const snap: PostureSnapshot = { run, findings, paths, remediations, audit: [] };
