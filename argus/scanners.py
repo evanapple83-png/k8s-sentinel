@@ -28,9 +28,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from typing import Any, Callable, Iterable, Optional
 
@@ -295,25 +297,41 @@ def run_kubescape(
 ) -> tuple[list, ScannerResult]:
     runner = runner or subprocess.run
     counter = _Counter("kubescape")
+    # kubescape prints a human banner to stdout even with --format json, so
+    # parsing stdout fails ("not a JSON object"). Send JSON to a file and read
+    # that instead. (F14)
+    fd, out_path = tempfile.mkstemp(prefix="kubescape-", suffix=".json")
+    os.close(fd)
     argv = [binary, "scan", "framework", framework,
-            "--format", "json", "--format-version", "v2", "--output", "-"]
+            "--format", "json", "--format-version", "v2", "--output", out_path]
     if kubeconfig:
         argv += ["--kubeconfig", kubeconfig]
     if context:
         argv += ["--kube-context", context]
-    stdout, result = _run_binary(runner, argv, scanner="kubescape")
-    if stdout is None:
-        return [], result
+    try:
+        _stdout, result = _run_binary(runner, argv, scanner="kubescape")
+        if result.status == "skipped":  # binary missing — nothing was run
+            return [], result
 
-    doc = _safe_json("kubescape", stdout)
-    if not isinstance(doc, dict):
-        result.status = "errored"
-        result.reason = "kubescape: stdout was not a JSON object"
-        return [], result
+        try:
+            with open(out_path) as fh:
+                doc = _safe_json("kubescape", fh.read())
+        except OSError:
+            doc = None
+        if not isinstance(doc, dict):
+            result.status = "errored"
+            result.reason = "kubescape: no JSON report written to output file"
+            return [], result
 
-    findings = list(_kubescape_findings(doc, counter))
-    result.findings_count = len(findings)
-    return findings, result
+        findings = list(_kubescape_findings(doc, counter))
+        result.findings_count = len(findings)
+        result.status = "ran"
+        return findings, result
+    finally:
+        try:
+            os.remove(out_path)
+        except OSError:
+            pass
 
 
 def _kubescape_findings(doc: dict, counter: _Counter) -> Iterable[dict]:

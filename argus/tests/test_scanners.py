@@ -91,6 +91,15 @@ def _trivy_handler(argv):
     return 0, json.dumps(_TRIVY_OUTPUT), ""
 
 
+def _kubescape_file_handler(argv):
+    """Mirror real kubescape (F14): write JSON to the --output file, print a
+    human banner to stdout."""
+    out = argv[argv.index("--output") + 1]
+    with open(out, "w") as fh:
+        json.dump(_KUBESCAPE_OUTPUT, fh)
+    return 0, "Framework scanned: NSA\n──────────────\n", ""
+
+
 class TrivyAdapterTests(unittest.TestCase):
 
     def test_two_workloads_share_image_yield_one_finding_each(self):
@@ -227,7 +236,7 @@ _KUBESCAPE_OUTPUT = {
 class KubescapeAdapterTests(unittest.TestCase):
 
     def setUp(self):
-        self.runner = make_runner({"kubescape": lambda argv: (0, json.dumps(_KUBESCAPE_OUTPUT), "")})
+        self.runner = make_runner({"kubescape": _kubescape_file_handler})
 
     def test_failed_control_becomes_finding_on_ns_name_target(self):
         with with_which({"kubescape"}):
@@ -314,7 +323,7 @@ class RunAllOrchestratorTests(unittest.TestCase):
         runner = make_runner({
             "trivy":      _trivy_handler,
             "kube-bench": lambda argv: (0, json.dumps(_KUBE_BENCH_OUTPUT), ""),
-            "kubescape":  lambda argv: (0, json.dumps(_KUBESCAPE_OUTPUT), ""),
+            "kubescape":  _kubescape_file_handler,
         })
         with with_which({"trivy", "kube-bench", "kubescape"}):
             run = scanners.run_all(_scenario_inventory(), runner=runner)
@@ -357,7 +366,7 @@ class EngineRoundTripTests(unittest.TestCase):
         runner = make_runner({
             "trivy":      _trivy_handler,
             "kube-bench": lambda argv: (0, json.dumps(_KUBE_BENCH_OUTPUT), ""),
-            "kubescape":  lambda argv: (0, json.dumps(_KUBESCAPE_OUTPUT), ""),
+            "kubescape":  _kubescape_file_handler,
         })
         with with_which({"trivy", "kube-bench", "kubescape"}):
             run = scanners.run_all(inventory, runner=runner)

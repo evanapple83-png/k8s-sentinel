@@ -129,7 +129,16 @@ export function mapToPostureSnapshot(report: ArgusReportJson): PostureSnapshot {
   const rawById = new Map<string, ArgusActiveFinding>();
   for (const f of report.activeFindings ?? []) rawById.set(f.id, f);
 
-  const findings = (report.findings ?? []).map((f) => mapFinding(f, rawById, workloadById));
+  // report.findings is the engine's CVE-correlated/scored set; non-CVE scanner
+  // findings (kube-bench CIS, kubescape misconfig) live only in activeFindings
+  // and would otherwise be dropped from the dashboard. Surface them too. (F15)
+  const scoredIds = new Set((report.findings ?? []).map((f) => f.id));
+  const findings = [
+    ...(report.findings ?? []).map((f) => mapFinding(f, rawById, workloadById)),
+    ...(report.activeFindings ?? [])
+      .filter((r) => !scoredIds.has(r.id) && (r.type ?? '') !== 'cve')
+      .map((r) => mapRawFinding(r, workloadById)),
+  ];
   const paths = mapPaths(report.paths ?? {}, workloadById);
   const chokePoints = mapChokePointsTyped(report.chokePoints ?? [], report.reachableJewels ?? []);
   const remediations = mapChokePointsToRemediations(chokePoints);
@@ -296,6 +305,35 @@ function mapFinding(
   // Strip undefined keys so the wire frame stays small. (Zod tolerates them
   // but JSON.stringify writes `null` for explicit undefined in objects? no —
   // strips them. This block is for clarity, not correctness.)
+  for (const k of Object.keys(wf) as (keyof WireFinding)[]) {
+    if (wf[k] === undefined) delete (wf as Record<string, unknown>)[k];
+  }
+  return wf;
+}
+
+/**
+ * Map a raw (non-CVE) scanner finding — kube-bench CIS / kubescape misconfig —
+ * straight to a wire finding. These never get the engine's CVE correlation, so
+ * severity comes from the scanner itself and reachable is false. (F15)
+ */
+function mapRawFinding(raw: ArgusActiveFinding, workloadById: Map<string, ArgusWorkload>): WireFinding {
+  const target = raw.target ?? 'cluster';
+  const wl = workloadById.get(target);
+  const [namespace, name] = splitTarget(target);
+  const wf: WireFinding = {
+    id: cap(raw.id, 256) || 'unknown',
+    source: cap(raw.source ?? 'argus', 256),
+    ruleId: cap(raw.ruleId ?? raw.cve ?? 'argus', 256),
+    title: cap(raw.title ?? raw.ruleId ?? 'finding', 4096),
+    severity: mapRawSeverity(raw.severity) ?? 'medium',
+    resource: {
+      kind: cap(wl?.kind ?? (target === 'cluster' ? 'Cluster' : 'Workload'), 256),
+      name: cap(name || target, 256),
+      namespace: namespace ? cap(namespace, 256) : undefined,
+      image: wl?.image ? cap(wl.image, 512) : undefined,
+    },
+    reachable: false,
+  };
   for (const k of Object.keys(wf) as (keyof WireFinding)[]) {
     if (wf[k] === undefined) delete (wf as Record<string, unknown>)[k];
   }
