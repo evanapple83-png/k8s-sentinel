@@ -70,6 +70,28 @@ describe('relay identity', () => {
     expect(relay.stats().agents).toBe(1);
   });
 
+  it('relays the reconnect token from verifyAgent into the registered ack (issue #11)', async () => {
+    const relay = makeRelay({
+      verifyAgent: async () => ({ clusterId: 'cluster-a', reconnectToken: 'sk-reconnect-xyz' }),
+    });
+    const agent = connect(relay);
+    agent.send({ t: 'register', protocol: 1, token: 'ok-cluster-a' });
+    await flush();
+    expect(agent.last()).toEqual({
+      t: 'registered',
+      clusterId: 'cluster-a',
+      sessionId: 'sess-0',
+      reconnectToken: 'sk-reconnect-xyz',
+    });
+  });
+
+  it('omits reconnectToken from the ack when verifyAgent does not issue one', async () => {
+    const agent = connect(relay);
+    agent.send({ t: 'register', protocol: 1, token: 'ok-cluster-a' });
+    await flush();
+    expect(agent.last()).toEqual({ t: 'registered', clusterId: 'cluster-a', sessionId: 'sess-0' });
+  });
+
   it('subscribes an authorized control', async () => {
     const control = connect(relay, { authToken: 'trusted' });
     control.send({ t: 'subscribe', clusterId: 'cluster-a' });

@@ -159,8 +159,9 @@ export class Relay {
       return;
     }
     let clusterId: string;
+    let reconnectToken: string | undefined;
     try {
-      ({ clusterId } = await this.deps.verifyAgent(reg, conn.ctx));
+      ({ clusterId, reconnectToken } = await this.deps.verifyAgent(reg, conn.ctx));
     } catch (e) {
       this.log('warn', 'agent registration rejected', { err: String(e), remote: conn.ctx.remote });
       conn.sendMsg({ t: 'error', code: 'unauthorized', message: 'agent registration rejected' });
@@ -179,7 +180,12 @@ export class Relay {
       prev.transport.close();
     }
     this.agents.set(clusterId, conn);
-    conn.sendMsg({ t: 'registered', clusterId, sessionId: conn.sessionId });
+    conn.sendMsg({
+      t: 'registered',
+      clusterId,
+      sessionId: conn.sessionId,
+      ...(reconnectToken ? { reconnectToken } : {}),
+    });
     this.log('info', 'agent registered', { clusterId, remote: conn.ctx.remote });
   }
 
@@ -309,6 +315,8 @@ export interface ConnContext {
 
 export interface AgentIdentity {
   clusterId: string;
+  /** Issued only on first-boot registration; relayed to the agent in the ack. */
+  reconnectToken?: string;
 }
 
 export interface RelayDeps {

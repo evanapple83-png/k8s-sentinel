@@ -14,6 +14,10 @@ import { buildTunnelHandlers } from './service.js';
  *   RELAY_URL                wss://relay… (required)
  *   SENTINEL_INSTALL_TOKEN   single-use token, first boot
  *   SENTINEL_CLUSTER_ID      known cluster id, on reconnect
+ *   SENTINEL_RECONNECT_TOKEN durable reconnect token (issue #11) — replayed with
+ *                            SENTINEL_CLUSTER_ID to survive tunnel drops. Held in
+ *                            memory after first boot; set via env to also survive
+ *                            a pod restart (Phase 2 persists it for you).
  *   SENTINEL_CLUSTER_NAME    friendly name shown in the UI
  *   RELAY_CLIENT_CERT/KEY    mTLS client material (PEM paths)
  *   RELAY_CA                 relay/CA bundle to trust (PEM path)
@@ -56,6 +60,7 @@ export async function runAgent(): Promise<void> {
     register: {
       token: process.env.SENTINEL_INSTALL_TOKEN,
       clusterId: process.env.SENTINEL_CLUSTER_ID,
+      reconnectToken: process.env.SENTINEL_RECONNECT_TOKEN,
       clusterName: process.env.SENTINEL_CLUSTER_NAME,
       agentVersion,
     },

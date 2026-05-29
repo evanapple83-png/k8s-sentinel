@@ -59,6 +59,48 @@ describe('connectTunnel reconnect loop', () => {
     expect(registers).toBe(3);
   });
 
+  it('swaps the install token for the durable reconnect token after first boot (issue #11)', async () => {
+    const registerFrames: Array<Record<string, unknown>> = [];
+    let dials = 0;
+
+    const dial = async () => {
+      dials++;
+      const [relaySide, clientSide] = createMemoryTransportPair();
+      relaySide.onMessage((d) => {
+        const msg = decode(d) as Record<string, unknown>;
+        if (msg.t === 'register') {
+          registerFrames.push(msg);
+          // Issue the reconnect token only on the very first registration.
+          const reconnectToken = dials === 1 ? 'sk-reconnect-abc' : undefined;
+          relaySide.send(
+            encode({ t: 'registered', clusterId: 'c1', sessionId: 's', ...(reconnectToken ? { reconnectToken } : {}) }),
+          );
+          setTimeout(() => relaySide.close(), 0);
+        }
+      });
+      return clientSide;
+    };
+
+    await connectTunnel({
+      dial,
+      register: { token: 'install-tok' },
+      handlers: stubHandlers(),
+      sleep: async () => {},
+      running: () => dials < 3,
+    });
+
+    // First frame bootstraps with the single-use install token...
+    expect(registerFrames[0]).toMatchObject({ token: 'install-tok' });
+    expect(registerFrames[0].reconnectToken).toBeUndefined();
+    // ...every reconnect after replays the durable token + clusterId, and the
+    // consumed install token is gone.
+    for (const frame of registerFrames.slice(1)) {
+      expect(frame).toMatchObject({ clusterId: 'c1', reconnectToken: 'sk-reconnect-abc' });
+      expect(frame.token).toBeUndefined();
+    }
+    expect(registerFrames.length).toBe(3);
+  });
+
   it('retries with backoff when the dial itself fails', async () => {
     let dials = 0;
     const dial = async () => {
