@@ -32,6 +32,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # QEMU lets the amd64 runner cross-build the arm64 variant. The Dockerfile
+      # is already TARGETARCH-aware (Trivy/kube-bench/Kubescape per-arch assets),
+      # so this just produces a multi-arch manifest list.
+      - uses: docker/setup-qemu-action@v3
+
       - uses: docker/setup-buildx-action@v3
 
       - name: Log in to ghcr.io
@@ -59,7 +64,10 @@ jobs:
         with:
           context: .
           file: apps/api/Dockerfile
-          platforms: linux/amd64
+          # Multi-arch so the agent runs on arm64 nodes too — Apple Silicon local
+          # clusters (OrbStack/Docker Desktop/kind) and arm64 cloud (Graviton),
+          # not just amd64. (Finding F3, 2026-05-29.)
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
