@@ -123,4 +123,28 @@ describe('mapToPostureSnapshot', () => {
     expect(out.chokePoints).toBeUndefined();
     expect(out.intel).toBeUndefined();
   });
+
+  it('surfaces non-CVE activeFindings (kube-bench / kubescape) the engine drops (F15)', () => {
+    const report: ArgusReportJson = {
+      // engine's CVE-correlated set
+      findings: [{ id: 'trivy-001', cve: 'CVE-2026-1', title: 'rce', target: 'cluster', decision: 'Act', score: 90 }],
+      // raw scanner findings — includes the CVE (already scored) + non-CVE rows
+      activeFindings: [
+        { id: 'trivy-001', source: 'trivy', type: 'cve', cve: 'CVE-2026-1', severity: 'critical', target: 'cluster', title: 'rce' },
+        { id: 'kb-001', source: 'kube-bench', type: 'cis', ruleId: '1.2.16', severity: 'medium', target: 'cluster', title: 'anonymous-auth must be false' },
+        { id: 'ks-001', source: 'kubescape', type: 'misconfig', ruleId: 'C-0017', severity: 'high', target: 'payments/invoice-api', title: 'immutable container filesystem' },
+      ],
+      paths: {},
+    };
+    const out = mapToPostureSnapshot(report);
+    const bySource = out.findings.reduce<Record<string, number>>((a, f) => ((a[f.source] = (a[f.source] ?? 0) + 1), a), {});
+    expect(bySource).toEqual({ trivy: 1, 'kube-bench': 1, kubescape: 1 });
+    const kb = out.findings.find((f) => f.id === 'kb-001')!;
+    expect(kb.severity).toBe('medium');
+    expect(kb.reachable).toBe(false);
+    expect(kb.ruleId).toBe('1.2.16');
+    // the already-scored CVE is not duplicated from activeFindings
+    expect(out.findings.filter((f) => f.id === 'trivy-001')).toHaveLength(1);
+    expect(PostureSnapshotSchema.safeParse(out).success).toBe(true);
+  });
 });
