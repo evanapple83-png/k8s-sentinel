@@ -24,12 +24,22 @@ import {
  * mTLS, and reconnect concerns live in ws-client.ts / connect.ts, so this class
  * is exercised end-to-end offline over an in-memory transport pair.
  */
+/** Keepalive: ping cadence and how long without ANY relay frame before we
+ *  treat the tunnel as dead and force a reconnect. The relay idle-closes silent
+ *  tunnels (~105s) and a half-open TCP socket is otherwise invisible to us, so
+ *  a periodic ping both refreshes the relay's idle timer and — via the missing
+ *  pong — lets us detect a stale connection and reconnect. (issue #11 / F6.) */
+const PING_INTERVAL_MS = 30_000;
+const STALE_AFTER_MS = 95_000;
+
 export class TunnelClient {
   private clusterId?: string;
   private readonly log: TunnelLogger;
   private registeredResolve?: (clusterId: string) => void;
   private registeredReject?: (err: Error) => void;
   private settled = false;
+  private pingTimer?: ReturnType<typeof setInterval>;
+  private lastInbound = 0;
 
   /** Resolves when the transport closes — drives the reconnect loop in connect.ts. */
   readonly whenClosed: Promise<void>;
@@ -42,10 +52,32 @@ export class TunnelClient {
       void this.onMessage(d);
     });
     opts.transport.onClose(() => {
+      this.stopKeepalive();
       if (!this.settled) this.registeredReject?.(new Error('transport closed before registration'));
       this.closedResolve();
       this.opts.onClose?.();
     });
+  }
+
+  /** Start pinging once registered; force a reconnect if the relay goes silent. */
+  private startKeepalive(): void {
+    this.stopKeepalive();
+    this.lastInbound = Date.now();
+    this.pingTimer = setInterval(() => {
+      if (Date.now() - this.lastInbound > STALE_AFTER_MS) {
+        this.log('warn', 'keepalive: no relay frames; reconnecting (stale/half-open tunnel)');
+        this.close();
+        return;
+      }
+      this.send({ t: 'ping', ts: Date.now() });
+    }, PING_INTERVAL_MS);
+  }
+
+  private stopKeepalive(): void {
+    if (this.pingTimer) {
+      clearInterval(this.pingTimer);
+      this.pingTimer = undefined;
+    }
   }
 
   /** Send `register`; resolves with the clusterId once the relay confirms. */
@@ -74,6 +106,7 @@ export class TunnelClient {
       this.log('warn', 'discarding malformed frame from relay', { err: (e as ProtocolError).message });
       return;
     }
+    this.lastInbound = Date.now(); // any frame (incl. pong) proves the tunnel is live
     switch (msg.t) {
       case 'registered':
         this.clusterId = msg.clusterId;
@@ -83,6 +116,7 @@ export class TunnelClient {
         // reconnect loop captures it so later reconnects skip the install token.
         this.opts.onRegistered?.(msg.clusterId, msg.reconnectToken);
         this.log('info', 'tunnel registered', { clusterId: msg.clusterId, sessionId: msg.sessionId });
+        this.startKeepalive();
         return;
       case 'command':
         return this.handleCommand(msg);
