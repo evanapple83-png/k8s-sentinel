@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   createMemoryTransportPair,
   decode,
@@ -148,5 +148,43 @@ describe('TunnelClient commands', () => {
     relay.push({ t: 'command', id: 'cmd-5', clusterId: 'cluster-7', kind: 'report', params: { format: 'md' } });
     await flush();
     expect(relay.ofType('result')[1]).toMatchObject({ id: 'cmd-5', ok: true });
+  });
+});
+
+describe('TunnelClient keepalive (F6)', () => {
+  it('pings the relay periodically after registration', async () => {
+    vi.useFakeTimers();
+    try {
+      const { relay, client } = setup();
+      void client.start();
+      await vi.advanceTimersByTimeAsync(0); // flush microtask delivery of register
+      relay.push({ t: 'registered', clusterId: 'c', sessionId: 's' });
+      await vi.advanceTimersByTimeAsync(0);
+      const before = relay.ofType('ping').length;
+      await vi.advanceTimersByTimeAsync(31_000);
+      expect(relay.ofType('ping').length).toBeGreaterThan(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('forces a reconnect (closes) when the relay goes silent', async () => {
+    vi.useFakeTimers();
+    try {
+      const { relay, client } = setup();
+      void client.start();
+      await vi.advanceTimersByTimeAsync(0);
+      relay.push({ t: 'registered', clusterId: 'c', sessionId: 's' });
+      await vi.advanceTimersByTimeAsync(0);
+      let closed = false;
+      void client.whenClosed.then(() => {
+        closed = true;
+      });
+      // FakeRelay never pongs → no inbound frames → watchdog should trip.
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(closed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
