@@ -43,6 +43,13 @@ export function dialRelay(opts: DialOptions): Promise<Transport> {
 /** Adapt a connected `ws` socket to the protocol {@link Transport}. */
 export function wsClientTransport(ws: WebSocket): Transport {
   let closed = false;
+  // Separate from `closed`: ensures the close handler fires exactly once, even
+  // when WE initiated the close via close() below. Previously close() set
+  // `closed=true` first, which made fire()'s `if (!closed)` guard swallow the
+  // ws 'close' event — so a relay-initiated `bye` (idle timeout) stranded the
+  // reconnect loop (whenClosed never resolved → process exited → token lost).
+  // (issue #11 reconnect.)
+  let notified = false;
   return {
     get closed() {
       return closed;
@@ -55,8 +62,9 @@ export function wsClientTransport(ws: WebSocket): Transport {
     },
     onClose(handler) {
       const fire = () => {
-        if (!closed) {
-          closed = true;
+        closed = true;
+        if (!notified) {
+          notified = true;
           handler();
         }
       };
