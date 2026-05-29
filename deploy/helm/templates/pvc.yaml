@@ -1,0 +1,19 @@
+{{- if .Values.persistence.enabled }}
+# Durable agent state (issue #11 Phase 2): persists the reconnect identity so the
+# agent survives pod reschedules, not just container restarts. ReadWriteOnce —
+# the Deployment uses the Recreate strategy so it isn't contended during rollout.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "k8s-sentinel.fullname" . }}-data
+  labels:
+    {{- include "k8s-sentinel.labels" . | nindent 4 }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size | quote }}
+  {{- if .Values.persistence.storageClass }}
+  storageClassName: {{ .Values.persistence.storageClass | quote }}
+  {{- end }}
+{{- end }}
