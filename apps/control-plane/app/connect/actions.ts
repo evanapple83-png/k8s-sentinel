@@ -117,16 +117,36 @@ export async function triggerScan(clusterId: string): Promise<ScanTriggerResult>
   const secret = process.env.RELAY_CONTROL_SECRET;
   if (!relayUrl || !secret) return { ok: false, reason: 'relay-not-configured' };
 
-  try {
-    const res = await fetch(`${relayUrl}/command`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
-      body: JSON.stringify({ clusterId, kind: 'scan' }),
-    });
-    const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; data?: { runId?: string } };
-    if (!res.ok || body.ok === false) return { ok: false, reason: body.error ?? `relay ${res.status}` };
-    return { ok: true, runId: body.data?.runId };
-  } catch {
-    return { ok: false, reason: 'relay-unreachable' };
+  // The agent's tunnel briefly drops during reconnects (idle/half-open ~tens of
+  // seconds). A scan command arriving in that window hits "agent offline". For
+  // reliability, retry across the gap: agent-offline / relay-unreachable are
+  // transient and fail fast, so retrying ~60s covers a reconnect without making
+  // the happy path slower (a connected agent answers on the first attempt).
+  const RETRY_BUDGET_MS = 60_000;
+  const RETRY_DELAY_MS = 4_000;
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+  const deadline = Date.now() + RETRY_BUDGET_MS;
+  let lastReason = 'agent offline';
+
+  while (true) {
+    try {
+      const res = await fetch(`${relayUrl}/command`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${secret}` },
+        body: JSON.stringify({ clusterId, kind: 'scan' }),
+      });
+      const body = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; data?: { runId?: string } };
+      if (res.ok && body.ok !== false) return { ok: true, runId: body.data?.runId };
+      lastReason = body.error ?? `relay ${res.status}`;
+      // Only "agent offline" is worth retrying (transient reconnect window);
+      // anything else (bad secret, 4xx) is terminal.
+      if (lastReason !== 'agent offline' || Date.now() + RETRY_DELAY_MS >= deadline) {
+        return { ok: false, reason: lastReason };
+      }
+    } catch {
+      lastReason = 'relay-unreachable';
+      if (Date.now() + RETRY_DELAY_MS >= deadline) return { ok: false, reason: lastReason };
+    }
+    await sleep(RETRY_DELAY_MS);
   }
 }

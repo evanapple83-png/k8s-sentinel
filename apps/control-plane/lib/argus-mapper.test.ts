@@ -139,6 +139,8 @@ describe('mapToPostureSnapshot', () => {
     const out = mapToPostureSnapshot(report);
     const bySource = out.findings.reduce<Record<string, number>>((a, f) => ((a[f.source] = (a[f.source] ?? 0) + 1), a), {});
     expect(bySource).toEqual({ trivy: 1, 'kube-bench': 1, kubescape: 1 });
+    // run.findingCount reflects ALL findings, not just the CVE-correlated set (F17)
+    expect(out.run.findingCount).toBe(3);
     const kb = out.findings.find((f) => f.id === 'kb-001')!;
     expect(kb.severity).toBe('medium');
     expect(kb.reachable).toBe(false);
